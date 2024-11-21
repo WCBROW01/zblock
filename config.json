@@ -1,0 +1,24 @@
+{
+  "logging": {
+    "level": "info",
+    "filename": "bot.log",
+    "quiet": true,
+    "overwrite": true,
+    "use_color": true,
+    "http": {
+      "enable": false,
+      "filename": "http.log"
+    },
+    "disable_modules": ["WEBSOCKETS", "USER_AGENT"]
+  },
+  "discord": {
+    "token": "YOUR-BOT-TOKEN",
+    "default_prefix": {
+      "enable": false,
+      "prefix": "YOUR-COMMANDS-PREFIX"
+    }
+  },
+  "zblock": {
+    "database_path": "feeds"
+  }
+}
