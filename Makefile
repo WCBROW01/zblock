@@ -1,4 +1,4 @@
-CFLAGS = -Wall -Wextra -O2
+CFLAGS = -Wall -Wextra -std=gnu99 -O2
 LDFLAGS = -lpthread -lcurl -lmrss
 
 SRC = $(wildcard *.c)

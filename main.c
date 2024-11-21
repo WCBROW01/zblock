@@ -1,4 +1,8 @@
+#define _GNU_SOURCE
+#define _XOPEN_SOURCE
+
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -38,7 +42,7 @@ struct bot_command {
 struct feed_info {
 	char *title;
 	char *url;
-	char *pubDate;
+	char *last_pubDate;
 	u64snowflake guild_id;
 	u64snowflake channel_id;
 	unsigned timer_id;
@@ -48,11 +52,23 @@ struct feed_info {
 void feed_info_free(struct feed_info *feed) {
 	free(feed->title);
 	free(feed->url);
-	free(feed->pubDate);
+	free(feed->last_pubDate);
 	free(feed);
 }
 
 static const char *database_path = "feeds";
+
+// format string for for the time format of pubDate
+#define PUBDATE_FMT "%a, %d %b %Y %T %z"
+
+// maybe change the function signature so you can actually do error handling with the result?
+static time_t pubDate_to_time_t(char *s) {
+	struct tm tm;
+	char *res = strptime(s, PUBDATE_FMT, &tm);
+	if (!res || !*res) return 0; // invalid time
+	
+	return mktime(&tm);
+}
 
 // default interval for the feed retrieval timer
 #define TIMER_INTERVAL 600
@@ -61,16 +77,27 @@ static const char *database_path = "feeds";
 static void timer_retrieve_feeds(struct discord *client, struct discord_timer *timer) {
 	struct feed_info *feed = timer->data;
 	
-	struct mrss_t *mrss_feed;
+	mrss_t *mrss_feed;
 	if (mrss_parse_url(feed->url, &mrss_feed)) return; // do nothing on error
 	
-	// get publication date and check if it is the same (change this later this is lazy and won't get all new feeds)
-	if (strcmp(mrss_feed->item->pubDate, feed->pubDate)) {
+	// get publication date of entries send any new ones
+	time_t last_pubDate_time = pubDate_to_time_t(feed->last_pubDate);
+	mrss_item_t *item = mrss_feed->item;
+	bool update_pubDate = false;
+	while (item && pubDate_to_time_t(item->pubDate) > last_pubDate_time) {
+		update_pubDate = true;
+		
 		// Send new entry in the feed
 		char msg[DISCORD_MAX_MESSAGE_LEN];
 		snprintf(msg, sizeof(msg), "## %s\n### %s\n%s", mrss_feed->title, mrss_feed->item->title, mrss_feed->item->link);
 		struct discord_create_message res = { .content = msg };
-		discord_create_message(client, feed->channel_id, &res, NULL);	
+		discord_create_message(client, feed->channel_id, &res, NULL);
+		item = item->next;
+	}
+	
+	if (update_pubDate) {
+		free(feed->last_pubDate);
+		feed->last_pubDate = strdup(mrss_feed->item->pubDate);
 	}
 	
 	mrss_free(mrss_feed);
@@ -99,13 +126,13 @@ static void bot_command_add(struct discord *client, const struct discord_interac
 	}
 	
 	feed->title = mrss_feed->title;
-	feed->pubDate = mrss_feed->item->pubDate;
+	feed->last_pubDate = mrss_feed->item->pubDate;
 	feed->feed_id = rand();
 	
 	
 	char file_path[PATH_MAX];
-	// check if we ran out of path
-	int path_len = snprintf(file_path, sizeof(file_path), "%s/%lu/%lu/%x", database_path, event->guild_id, event->channel_id, feed->feed_id);
+	// maybe check if we ran out of characters for path?
+	snprintf(file_path, sizeof(file_path), "%s/%lu/%lu/%x", database_path, event->guild_id, event->channel_id, feed->feed_id);
 	
 	FILE *fp = fopen(file_path, "w");
 	if (!fp) {
@@ -114,7 +141,7 @@ static void bot_command_add(struct discord *client, const struct discord_interac
 		feed_info_free(feed);
 		goto send_msg;
 	}
-	fprintf(fp, "title=%s\nurl=%s\npubDate=%s\n", feed->title, feed->url, feed->pubDate);
+	fprintf(fp, "title=%s\nurl=%s\nlast_pubDate=%s\n", feed->title, feed->url, feed->last_pubDate);
 	fclose(fp);
 	
 	// spawn the timer for this feed
