@@ -15,6 +15,9 @@
 
 #include <mrss.h>
 
+#include "config.h"
+#include "feed_info.h"
+
 // Function pointer type for commands
 typedef void (*command_func)(struct discord *, const struct discord_interaction *);
 
@@ -38,25 +41,6 @@ struct bot_command {
 	}; \
 	discord_create_interaction_response(client, event->id, event->token, &res, NULL); \
 } while (0)
-
-struct feed_info {
-	char *title;
-	char *url;
-	char *last_pubDate;
-	u64snowflake guild_id;
-	u64snowflake channel_id;
-	unsigned timer_id;
-	unsigned feed_id;
-};
-
-void feed_info_free(struct feed_info *feed) {
-	free(feed->title);
-	free(feed->url);
-	free(feed->last_pubDate);
-	free(feed);
-}
-
-static const char *database_path = "feeds";
 
 // format string for for the time format of pubDate
 #define PUBDATE_FMT "%a, %d %b %Y %T %z"
@@ -98,6 +82,7 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 	if (update_pubDate) {
 		free(feed->last_pubDate);
 		feed->last_pubDate = strdup(mrss_feed->item->pubDate);
+		// TODO: save the updated pubDate to disk once that's implemented
 	}
 	
 	mrss_free(mrss_feed);
@@ -128,29 +113,22 @@ static void bot_command_add(struct discord *client, const struct discord_interac
 	feed->title = mrss_feed->title;
 	feed->last_pubDate = mrss_feed->item->pubDate;
 	feed->feed_id = rand();
+	feed->guild_id = event->guild_id;
+	feed->channel_id = event->channel_id;
 	
 	
-	char file_path[PATH_MAX];
-	// maybe check if we ran out of characters for path?
-	snprintf(file_path, sizeof(file_path), "%s/%lu/%lu/%x", database_path, event->guild_id, event->channel_id, feed->feed_id);
-	
-	FILE *fp = fopen(file_path, "w");
-	if (!fp) {
-		snprintf(msg, sizeof(msg), "Error adding feed: %s", strerror(errno));
-		mrss_free(mrss_feed);
-		feed_info_free(feed);
-		goto send_msg;
+	feed_info_err feed_error = feed_info_save_file(feed);
+	if (feed_error) {
+		// write error message
+		snprintf(msg, sizeof(msg), "Error adding feed: %s", feed_info_strerror(feed_error));
+	} else {
+		// spawn the timer for this feed
+		feed->timer_id = discord_timer_interval(client, timer_retrieve_feeds, NULL, feed, 0, TIMER_INTERVAL, -1);	
+		// write the confirmation message
+		snprintf(msg, sizeof(msg), "The following feed has been successfully added to this channel:\n`%s`", feed->url);
 	}
-	fprintf(fp, "title=%s\nurl=%s\nlast_pubDate=%s\n", feed->title, feed->url, feed->last_pubDate);
-	fclose(fp);
-	
-	// spawn the timer for this feed
-	feed->timer_id = discord_timer_interval(client, timer_retrieve_feeds, NULL, feed, 0, TIMER_INTERVAL, -1);
-	
+		
 	mrss_free(mrss_feed);
-	
-	// send the confirmation message
-	snprintf(msg, sizeof(msg), "The following feed has been successfully added to this channel:\n`%s`", feed->url);
 	
 	send_msg:
 	struct discord_interaction_response res = {
@@ -263,6 +241,7 @@ static void on_interaction(struct discord *client, const struct discord_interact
 int main(void) {
 	srand(time(NULL));
 	struct discord *client = discord_config_init("config.json");
+	zblock_config_load(client);
 	discord_set_on_ready(client, &on_ready);
 	discord_set_on_interaction_create(client, &on_interaction);
 	discord_run(client);
