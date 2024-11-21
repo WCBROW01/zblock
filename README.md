@@ -2,8 +2,8 @@
 A simple, lightweight Discord RSS bot
 
 ## Requirements
-- curl
-- concord
+- libcurl
+- [concord](https://github.com/Cogmasters/concord/)
 - libmrss
 
 ## TODO
