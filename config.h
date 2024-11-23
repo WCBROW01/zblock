@@ -5,7 +5,7 @@
 
 // the current zblock config
 extern struct zblock_config {
-	char *database_path;
+	char *conninfo;
 } zblock_config;
 
 int zblock_config_load(struct discord *client);

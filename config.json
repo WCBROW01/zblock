@@ -19,6 +19,6 @@
     }
   },
   "zblock": {
-    "database_path": "feeds"
+    "conninfo": "YOUR-DB-CONNINFO"
   }
 }

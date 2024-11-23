@@ -1,3 +1,6 @@
+#define _GNU_SOURCE
+#define _XOPEN_SOURCE
+
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,27 +10,23 @@
 #include <concord/discord.h>
 #include <concord/log.h>
 
+#include <postgresql/libpq-fe.h>
+
 #include "config.h"
 #include "feed_info.h"
 
-void feed_info_free(feed_info *feed) {
-	free(feed->title);
-	free(feed->url);
-	free(feed->last_pubDate);
-	free(feed);
-}
-
-const char *feed_info_strerror(feed_info_err error) {
-	static_assert(FEED_INFO_ERRORCOUNT == 3, "Not all feed info errors implemented");
+// returns a string about the result of a feed_info function
+const char *zblock_feed_info_strerror(zblock_feed_info_err error) {
+	static_assert(ZBLOCK_FEED_INFO_ERRORCOUNT == 3, "Not all feed info errors implemented");
 	switch (error) {
-		case FEED_INFO_OK: {
+		case ZBLOCK_FEED_INFO_OK: {
 			return "OK";
 		}
-		case FEED_INFO_FILEERROR: {
-			return strerror(errno);
-		}
-		case FEED_INFO_NULL: {
+		case ZBLOCK_FEED_INFO_NULL: {
 			return "No feed info was provided";
+		}
+		case ZBLOCK_FEED_INFO_POSTGRES: {
+			return "An error was encountered with the feed database";
 		}
 		default: {
 			return "Unspecified error";
@@ -35,22 +34,18 @@ const char *feed_info_strerror(feed_info_err error) {
 	}
 }
 
-/*
- * Reads feed info for given information from file and puts it in the provided struct
- */
-feed_info_err feed_info_save_file(feed_info *feed) {
-	if (!feed) return FEED_INFO_NULL;
+// format string for for the time format of pubDate
+#define PUBDATE_FMT "%a, %d %b %Y %T %z"
+
+time_t pubDate_to_time_t(char *s) {
+	struct tm tm;
+	char *res = strptime(s, PUBDATE_FMT, &tm);
+	if (!res || !*res) return 0; // invalid time
 	
-	char file_path[PATH_MAX];
-	// maybe check if we ran out of characters for path?
-	snprintf(file_path, sizeof(file_path), "%s/%lu/%lu/%x", zblock_config.database_path, feed->guild_id, feed->channel_id, feed->feed_id);
-	
-	FILE *fp = fopen(file_path, "w");
-	if (!fp) return FEED_INFO_FILEERROR;
-	fprintf(fp, "title=%s\nurl=%s\nlast_pubDate=%s\n", feed->title, feed->url, feed->last_pubDate);
-	fclose(fp);
+	return mktime(&tm);
 }
 
-feed_info_err feed_info_load_file(u64snowflake guild_id, u64snowflake channel_id, unsigned feed_id, feed_info *feed) {
+// Insert new feed into the database
+zblock_feed_info_err zblock_feed_info_insert(PGconn *conn, zblock_feed_info *feed) {
 	assert(0 && "not implemented yet");
 }

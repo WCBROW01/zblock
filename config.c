@@ -6,6 +6,6 @@ struct zblock_config zblock_config;
 
 int zblock_config_load(struct discord *client) {
 	// TODO: actually load config
-	zblock_config.database_path = "feeds";
+	zblock_config.conninfo = "feeds";
 	return 0;
 }

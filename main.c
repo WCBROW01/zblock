@@ -1,6 +1,3 @@
-#define _GNU_SOURCE
-#define _XOPEN_SOURCE
-
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -10,10 +7,14 @@
 #include <unistd.h>
 #include <time.h>
 
+#include <curl/curl.h>
+
 #include <concord/discord.h>
 #include <concord/log.h>
 
 #include <mrss.h>
+
+#include <postgresql/libpq-fe.h>
 
 #include "config.h"
 #include "feed_info.h"
@@ -42,21 +43,169 @@ struct bot_command {
 	discord_create_interaction_response(client, event->id, event->token, &res, NULL); \
 } while (0)
 
-// format string for for the time format of pubDate
-#define PUBDATE_FMT "%a, %d %b %Y %T %z"
-
-// maybe change the function signature so you can actually do error handling with the result?
-static time_t pubDate_to_time_t(char *s) {
-	struct tm tm;
-	char *res = strptime(s, PUBDATE_FMT, &tm);
-	if (!res || !*res) return 0; // invalid time
-	
-	return mktime(&tm);
-}
-
 // default interval for the feed retrieval timer
 #define TIMER_INTERVAL 600
 
+typedef struct {
+	zblock_feed_info_minimal info;
+	FILE *fp;
+	char *buf;
+	size_t bufsize;
+} zblock_feed_buffer;
+
+// the database connection
+static PGconn *database_conn;
+
+// this does not account for large-scale usage yet.
+static void timer_retrieve_feeds(struct discord *client, struct discord_timer *timer) {
+	// not doing anything with the timer yet
+	(void) timer;
+
+	// all this SQL stuff should *really* be extracted somewhere else
+	// maybe make a function where you can do a lookup with a quantity and offset
+	PGresult *database_res = PQexec(database_conn, "SELECT url, last_pubDate, channel_id from feeds");
+	if (PQresultStatus(database_res) != PGRES_COMMAND_OK) {
+		log_error("Unable to retrieve feed list: %s", PQerrorMessage(database_conn));
+		return;
+	}
+	
+	// get all the required feed info to send messages
+	int nfeeds = PQntuples(database_res);
+	zblock_feed_buffer *feed_list = malloc(nfeeds * sizeof(*feed_list));
+	if (!feed_list) {
+		// well there goes that idea
+		PQclear(database_res);
+		return;
+	}
+	
+	for (int i = 0; i < nfeeds; ++i) {
+		feed_list[i].info.url = PQgetvalue(database_res, i, 0);
+		feed_list[i].info.last_pubDate = PQgetvalue(database_res, i, 1);
+		feed_list[i].info.channel_id = *(u64snowflake *) PQgetvalue(database_res, i, 2);
+	}
+	
+	// get all those feeds
+	CURLM *multi = curl_multi_init();
+	if (!multi) {
+		// oh no
+		goto all_done;
+	}
+	
+	for (int i = 0; i < nfeeds; ++i) {
+		feed_list[i].fp = open_memstream(&feed_list[i].buf, &feed_list[i].bufsize);
+		if (!feed_list[i].fp) continue; // fail gracefully
+	
+		CURL *feed_handle = curl_easy_init();
+		if (!feed_handle) {
+			fclose(feed_list[i].fp);
+			free(feed_list[i].buf);
+			continue;
+		}
+		
+		curl_easy_setopt(feed_handle, CURLOPT_URL, feed_list[i].info.url);
+		curl_easy_setopt(feed_handle, CURLOPT_WRITEDATA, feed_list[i].fp);
+		curl_easy_setopt(feed_handle, CURLOPT_PRIVATE, &feed_list[i]);
+		CURLMcode mc = curl_multi_add_handle(multi, feed_handle);
+		if (mc) {
+			curl_easy_cleanup(feed_handle);
+			fclose(feed_list[i].fp);
+			free(feed_list[i].buf);
+			continue;
+		}
+	}
+	
+	// it's time
+	int running_handles_prev = 0;
+	int running_handles;
+	do {
+		CURLMcode mc = curl_multi_perform(multi, &running_handles);
+		if (running_handles < running_handles_prev) {
+			running_handles_prev = running_handles;
+			
+			CURLMsg *msg;
+			int msgs_in_queue;
+			do {
+				msg = curl_multi_info_read(multi, &msgs_in_queue);
+				if (msg && msg->msg == CURLMSG_DONE) {
+					CURL *handle = msg->easy_handle;
+					// get our buffer out
+					zblock_feed_buffer *feed_buffer;
+					curl_easy_getinfo(handle, CURLINFO_PRIVATE, &feed_buffer);
+					if (!msg->data.result) {
+						// hell yeah parse that RSS feed
+						mrss_t *mrss_feed;
+						mrss_error_t mrss_err = mrss_parse_buffer(feed_buffer->buf, feed_buffer->bufsize, &mrss_feed);
+						if (!mrss_err) {
+							// get publication date of entries send any new ones
+							time_t last_pubDate_time = pubDate_to_time_t(feed_buffer->info.last_pubDate);
+							mrss_item_t *item = mrss_feed->item;
+							bool update_pubDate = false;
+							while (item && pubDate_to_time_t(item->pubDate) > last_pubDate_time) {
+								update_pubDate = true;
+								
+								// Send new entry in the feed
+								char msg[DISCORD_MAX_MESSAGE_LEN];
+								snprintf(msg, sizeof(msg), "## %s\n### %s\n%s", mrss_feed->title, mrss_feed->item->title, mrss_feed->item->link);
+								struct discord_create_message res = { .content = msg };
+								discord_create_message(client, feed_buffer->info.channel_id, &res, NULL);
+								item = item->next;
+							}
+							
+							if (update_pubDate) {
+								char *current_pubDate = mrss_feed->item->pubDate;
+								char channel_id_str[21]; // hold a 64-bit int in decimal form
+								snprintf(channel_id_str, sizeof(channel_id_str), "%ld", feed_buffer->info.channel_id);
+								
+								const char *const update_params[] = {current_pubDate, feed_buffer->info.url, channel_id_str};
+								// save the updated pubDate to disk once that's implemented
+								PGresult *update_res = PQexecParams(database_conn,
+									"UPDATE feeds SET last_pubDate = $1 WHERE url = $2 AND channel_id = $3",
+									3, NULL, update_params, NULL, NULL, 0
+								);
+								ExecStatusType update_status = PQresultStatus(update_res);
+								if (update_status != PGRES_COMMAND_OK) {
+									log_error("Failed to update pubDate: %s", PQresStatus(update_status)); // cry
+								}
+								PQclear(update_res);
+							}
+							
+							// done with our feed!
+							mrss_free(mrss_feed);
+						} else {
+							log_error("Error parsing feed: %s\n", mrss_strerror(mrss_err));
+						}
+					} else {
+						log_error("Error downloading RSS feed: %s\n", msg->data.result);
+					}
+					
+					// free our buffers
+					curl_easy_cleanup(handle);
+					fclose(feed_buffer->fp);
+					free(feed_buffer->buf);
+				}
+			} while (msg);
+		}
+		
+		if (!mc && running_handles > 0) {
+			mc = curl_multi_poll(multi, NULL, 0, 300, NULL);
+		}
+		if (mc) {
+			// figure out how to free all resources instead of crashing
+			log_fatal("curl_multi_poll(): %s", curl_multi_strerror(mc));
+			exit(1);
+		}
+	} while (running_handles > 0);
+	
+	curl_multi_cleanup(multi);
+	
+	// processing is done
+	all_done:
+	free(feed_list);
+	PQclear(database_res);
+	
+}
+
+#if 0
 // this just barely works at the moment
 static void timer_retrieve_feeds(struct discord *client, struct discord_timer *timer) {
 	struct feed_info *feed = timer->data;
@@ -87,45 +236,37 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 	
 	mrss_free(mrss_feed);
 }
+#endif
 
 static void bot_command_add(struct discord *client, const struct discord_interaction *event) {
 	char msg[DISCORD_MAX_MESSAGE_LEN];
-	struct feed_info *feed = calloc(1, sizeof(struct feed_info));
-	if (!feed) {
-		snprintf(msg, sizeof(msg), "Error adding feed: %s", strerror(errno));
-		goto send_msg;
-	}
+	zblock_feed_info feed;
 	
-	feed->url = strdup(event->data->options->array[0].value);
-	if (!feed->url) {
+	feed.url = event->data->options->array[0].value;
+	if (!feed.url) {
 		snprintf(msg, sizeof(msg), "Error adding feed: %s", strerror(errno));
-		feed_info_free(feed);
 		goto send_msg;
 	}
 	
 	mrss_t *mrss_feed = NULL;
-	if(mrss_parse_url(feed->url, &mrss_feed)) {
+	if(mrss_parse_url(feed.url, &mrss_feed)) {
 		// error here figure this out
-		feed_info_free(feed);
 		goto send_msg;
 	}
 	
-	feed->title = mrss_feed->title;
-	feed->last_pubDate = mrss_feed->item->pubDate;
-	feed->feed_id = rand();
-	feed->guild_id = event->guild_id;
-	feed->channel_id = event->channel_id;
+	feed.title = mrss_feed->title;
+	feed.last_pubDate = mrss_feed->item->pubDate;
+	feed.guild_id = event->guild_id;
+	feed.channel_id = event->channel_id;
 	
 	
-	feed_info_err feed_error = feed_info_save_file(feed);
+	zblock_feed_info_err feed_error = zblock_feed_info_insert(database_conn, &feed);
 	if (feed_error) {
 		// write error message
-		snprintf(msg, sizeof(msg), "Error adding feed: %s", feed_info_strerror(feed_error));
+		snprintf(msg, sizeof(msg), "Error adding feed: %s", zblock_feed_info_strerror(feed_error));
 	} else {
-		// spawn the timer for this feed
-		feed->timer_id = discord_timer_interval(client, timer_retrieve_feeds, NULL, feed, 0, TIMER_INTERVAL, -1);	
 		// write the confirmation message
-		snprintf(msg, sizeof(msg), "The following feed has been successfully added to this channel:\n`%s`", feed->url);
+		snprintf(msg, sizeof(msg), "The following feed has been successfully added to this channel:\n`%s`", feed.url);
 	}
 		
 	mrss_free(mrss_feed);
@@ -211,7 +352,7 @@ static void on_ready(struct discord *client, const struct discord_ready *event) 
 	}
 	
 	// create feed retrieval timers
-	
+	discord_timer_interval(client, timer_retrieve_feeds, NULL, NULL, 0, TIMER_INTERVAL, -1);
 
 	log_info("Ready!");
 }
@@ -242,9 +383,19 @@ int main(void) {
 	srand(time(NULL));
 	struct discord *client = discord_config_init("config.json");
 	zblock_config_load(client);
+	
+	// connect to database
+	database_conn = PQconnectdb(zblock_config.conninfo);
+	if (!database_conn) {
+		log_fatal("Failed to connect to database.");
+		goto cleanup;
+	}
+	
 	discord_set_on_ready(client, &on_ready);
 	discord_set_on_interaction_create(client, &on_interaction);
 	discord_run(client);
+	
+	cleanup:
 	discord_cleanup(client);
 	ccord_global_cleanup();
 }
