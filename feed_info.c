@@ -47,7 +47,7 @@ zblock_feed_info_err zblock_feed_info_exists(PGconn *conn, const char *url, u64s
 	if (!conn || !exists) return ZBLOCK_FEED_INFO_INVALID_ARGS;
 	
 	char channel_id_str[21]; // hold a 64-bit int in decimal form
-	snprintf(channel_id_str, sizeof(channel_id_str), "%ld", channel_id);
+	snprintf(channel_id_str, sizeof(channel_id_str), "%" PRId64, channel_id);
 	
 	const char *const params[] = {url, channel_id_str};
 	PGresult *res = PQexecParams(conn, "SELECT COUNT(1) FROM feeds WHERE url = $1 AND channel_id = $2", 2, NULL, params, NULL, NULL, 0);
@@ -79,9 +79,9 @@ zblock_feed_info_err zblock_feed_info_insert(PGconn *conn, zblock_feed_info *fee
 
 	// I don't want to deal with the extra fuss that is sending these in binary format
 	char channel_id_str[21];
-	snprintf(channel_id_str, sizeof(channel_id_str), "%ld", feed->channel_id);
+	snprintf(channel_id_str, sizeof(channel_id_str), "%" PRId64, feed->channel_id);
 	char guild_id_str[21];
-	snprintf(guild_id_str, sizeof(guild_id_str), "%ld", feed->guild_id);
+	snprintf(guild_id_str, sizeof(guild_id_str), "%" PRId64, feed->guild_id);
 	const char *const insert_params[] = {feed->url, feed->last_pubDate, channel_id_str, feed->title, guild_id_str};
 	PGresult *insert_res = PQexecParams(conn,
 		"INSERT INTO feeds (url, last_pubDate, channel_id, title, guild_id) VALUES ($1, $2, $3, $4, $5)",
@@ -115,7 +115,7 @@ zblock_feed_info_err zblock_feed_info_delete(PGconn *conn, const char *url, u64s
 	
 	// I don't want to deal with the extra fuss that is sending these in binary format
 	char channel_id_str[21];
-	snprintf(channel_id_str, sizeof(channel_id_str), "%" PRIu64, channel_id);
+	snprintf(channel_id_str, sizeof(channel_id_str), "%" PRId64, channel_id);
 	const char *const params[] = {url, channel_id_str};
 	PGresult *res = PQexecParams(conn,
 		"DELETE FROM feeds WHERE url = $1 AND channel_id = $2",
@@ -137,7 +137,7 @@ zblock_feed_info_err zblock_feed_info_update(PGconn *conn, zblock_feed_info_mini
 	if (!conn || !feed) return ZBLOCK_FEED_INFO_INVALID_ARGS;
 
 	char channel_id_str[21]; // hold a 64-bit int in decimal form
-	snprintf(channel_id_str, sizeof(channel_id_str), "%ld", feed->channel_id);
+	snprintf(channel_id_str, sizeof(channel_id_str), "%" PRId64, feed->channel_id);
 	
 	const char *const update_params[] = {feed->last_pubDate, feed->url, channel_id_str};
 	// save the updated pubDate to disk once that's implemented
