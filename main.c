@@ -205,39 +205,6 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 	
 }
 
-#if 0
-// this just barely works at the moment
-static void timer_retrieve_feeds(struct discord *client, struct discord_timer *timer) {
-	struct feed_info *feed = timer->data;
-	
-	mrss_t *mrss_feed;
-	if (mrss_parse_url(feed->url, &mrss_feed)) return; // do nothing on error
-	
-	// get publication date of entries send any new ones
-	time_t last_pubDate_time = pubDate_to_time_t(feed->last_pubDate);
-	mrss_item_t *item = mrss_feed->item;
-	bool update_pubDate = false;
-	while (item && pubDate_to_time_t(item->pubDate) > last_pubDate_time) {
-		update_pubDate = true;
-		
-		// Send new entry in the feed
-		char msg[DISCORD_MAX_MESSAGE_LEN];
-		snprintf(msg, sizeof(msg), "## %s\n### %s\n%s", mrss_feed->title, mrss_feed->item->title, mrss_feed->item->link);
-		struct discord_create_message res = { .content = msg };
-		discord_create_message(client, feed->channel_id, &res, NULL);
-		item = item->next;
-	}
-	
-	if (update_pubDate) {
-		free(feed->last_pubDate);
-		feed->last_pubDate = strdup(mrss_feed->item->pubDate);
-		// TODO: save the updated pubDate to disk once that's implemented
-	}
-	
-	mrss_free(mrss_feed);
-}
-#endif
-
 static void bot_command_add(struct discord *client, const struct discord_interaction *event) {
 	char msg[DISCORD_MAX_MESSAGE_LEN];
 	zblock_feed_info feed;
