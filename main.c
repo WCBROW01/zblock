@@ -237,6 +237,8 @@ static void bot_command_add(struct discord *client, const struct discord_interac
 }
 
 static void bot_command_remove(struct discord *client, const struct discord_interaction *event) {
+	char msg[DISCORD_MAX_MESSAGE_LEN];
+		
 	char *url = event->data->options->array[0].value;
 	zblock_feed_info_err error = zblock_feed_info_delete(database_conn, url, event->channel_id);
 	if (error) {
