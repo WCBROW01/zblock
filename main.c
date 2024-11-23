@@ -65,7 +65,7 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 	// maybe make a function where you can do a lookup with a quantity and offset
 	PGresult *database_res = PQexec(database_conn, "SELECT url, last_pubDate, channel_id from feeds");
 	if (PQresultStatus(database_res) != PGRES_TUPLES_OK) {
-		log_error("Unable to retrieve feed list: %s", PQresultErrorMessage(select_res));
+		log_error("Unable to retrieve feed list: %s", PQresultErrorMessage(database_res));
 		PQclear(database_res);
 		return;
 	}
@@ -180,6 +180,7 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 					}
 					
 					// free our buffers
+					curl_multi_remove_handle(multi, handle);
 					curl_easy_cleanup(handle);
 					fclose(feed_buffer->fp);
 					free(feed_buffer->buf);
@@ -226,7 +227,7 @@ static void bot_command_add(struct discord *client, const struct discord_interac
 	}
 	
 	if (PQntuples(select_res) > 0) {
-		PQclear(select_res)
+		PQclear(select_res);
 		snprintf(msg, sizeof(msg), "Error adding feed: it has already been added to this channel");
 		goto send_msg;
 	} else {
@@ -243,15 +244,16 @@ static void bot_command_add(struct discord *client, const struct discord_interac
 	feed.title = mrss_feed->title;
 	feed.last_pubDate = mrss_feed->item->pubDate;
 	
-	
+	char guild_id_str[21];
+	snprintf(guild_id_str, sizeof(guild_id_str), "%ld", feed.guild_id);
+	const char *const insert_params[] = {feed.url, feed.last_pubDate, channel_id_str, feed.title, guild_id_str};
 	PGresult *insert_res = PQexecParams(database_conn,
 		"INSERT INTO feeds (url, last_pubDate, channel_id, title, guild_id) VALUES ($1, $2, $3, $4, $5)",
-		feed.url, feed.last_pubDate, channel_id_str, feed.title, guild_id_str,
-		5, NULL, select_params, NULL, NULL, 0
+		5, NULL, insert_params, NULL, NULL, 0
 	);
 	if (PQresultStatus(insert_res) != PGRES_COMMAND_OK) {
 		// write error message
-		snprintf(msg, sizeof(msg), "Error adding feed: %s", zblock_feed_info_strerror(feed_error));
+		snprintf(msg, sizeof(msg), "Error adding feed: %s", PQresultErrorMessage(insert_res));
 	} else {
 		// write the confirmation message
 		snprintf(msg, sizeof(msg), "The following feed has been successfully added to this channel:\n`%s`", feed.url);
