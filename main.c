@@ -64,8 +64,9 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 	// all this SQL stuff should *really* be extracted somewhere else
 	// maybe make a function where you can do a lookup with a quantity and offset
 	PGresult *database_res = PQexec(database_conn, "SELECT url, last_pubDate, channel_id from feeds");
-	if (PQresultStatus(database_res) != PGRES_COMMAND_OK) {
-		log_error("Unable to retrieve feed list: %s", PQerrorMessage(database_conn));
+	if (PQresultStatus(database_res) != PGRES_TUPLES_OK) {
+		log_error("Unable to retrieve feed list: %s", PQresultErrorMessage(select_res));
+		PQclear(database_res);
 		return;
 	}
 	
@@ -162,9 +163,9 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 									"UPDATE feeds SET last_pubDate = $1 WHERE url = $2 AND channel_id = $3",
 									3, NULL, update_params, NULL, NULL, 0
 								);
-								ExecStatusType update_status = PQresultStatus(update_res);
-								if (update_status != PGRES_COMMAND_OK) {
-									log_error("Failed to update pubDate: %s", PQresStatus(update_status)); // cry
+								
+								if (PQresultStatus(update_res) != PGRES_COMMAND_OK) {
+									log_error("Failed to update pubDate: %s", PQresultErrorMessage(update_res)); // cry
 								}
 								PQclear(update_res);
 							}
@@ -210,32 +211,53 @@ static void bot_command_add(struct discord *client, const struct discord_interac
 	zblock_feed_info feed;
 	
 	feed.url = event->data->options->array[0].value;
-	if (!feed.url) {
-		snprintf(msg, sizeof(msg), "Error adding feed: %s", strerror(errno));
-		goto send_msg;
+	feed.channel_id = event->channel_id;
+	feed.guild_id = event->guild_id;
+	
+	// check if it already exists
+	char channel_id_str[21]; // hold a 64-bit int in decimal form
+	snprintf(channel_id_str, sizeof(channel_id_str), "%ld", feed.channel_id);
+	
+	const char *const select_params[] = {feed.url, channel_id_str};
+	PGresult *select_res = PQexecParams(database_conn, "SELECT * from feeds WHERE url = $1 AND channel_id = $2", 2, NULL, select_params, NULL, NULL, 0);
+	if (PQresultStatus(select_res) != PGRES_TUPLES_OK) {
+		snprintf(msg, sizeof(msg), "Error adding feed: %s", PQresultErrorMessage(select_res));
+		PQclear(select_res);
 	}
 	
-	mrss_t *mrss_feed = NULL;
-	if(mrss_parse_url(feed.url, &mrss_feed)) {
-		// error here figure this out
+	if (PQntuples(select_res) > 0) {
+		PQclear(select_res)
+		snprintf(msg, sizeof(msg), "Error adding feed: it has already been added to this channel");
+		goto send_msg;
+	} else {
+		PQclear(select_res); // don't actually do anything with the contents of the query
+	}
+	
+	mrss_t *mrss_feed;
+	mrss_error_t mrss_error = mrss_parse_url(feed.url, &mrss_feed);
+	if (mrss_error) {
+		snprintf(msg, sizeof(msg), "Error adding feed: %s", mrss_strerror(mrss_error));
 		goto send_msg;
 	}
 	
 	feed.title = mrss_feed->title;
 	feed.last_pubDate = mrss_feed->item->pubDate;
-	feed.guild_id = event->guild_id;
-	feed.channel_id = event->channel_id;
 	
 	
-	zblock_feed_info_err feed_error = zblock_feed_info_insert(database_conn, &feed);
-	if (feed_error) {
+	PGresult *insert_res = PQexecParams(database_conn,
+		"INSERT INTO feeds (url, last_pubDate, channel_id, title, guild_id) VALUES ($1, $2, $3, $4, $5)",
+		feed.url, feed.last_pubDate, channel_id_str, feed.title, guild_id_str,
+		5, NULL, select_params, NULL, NULL, 0
+	);
+	if (PQresultStatus(insert_res) != PGRES_COMMAND_OK) {
 		// write error message
 		snprintf(msg, sizeof(msg), "Error adding feed: %s", zblock_feed_info_strerror(feed_error));
 	} else {
 		// write the confirmation message
 		snprintf(msg, sizeof(msg), "The following feed has been successfully added to this channel:\n`%s`", feed.url);
 	}
-		
+	
+	PQclear(insert_res);
 	mrss_free(mrss_feed);
 	
 	send_msg:
@@ -362,6 +384,7 @@ int main(void) {
 	discord_set_on_interaction_create(client, &on_interaction);
 	discord_run(client);
 	
+	PQfinish(database_conn);
 	cleanup:
 	discord_cleanup(client);
 	ccord_global_cleanup();
