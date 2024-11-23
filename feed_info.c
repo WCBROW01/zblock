@@ -51,7 +51,7 @@ zblock_feed_info_err zblock_feed_info_exists(PGconn *conn, const char *url, u64s
 	snprintf(channel_id_str, sizeof(channel_id_str), "%" PRId64, channel_id);
 	
 	const char *const params[] = {url, channel_id_str};
-	PGresult *res = PQexecParams(conn, "SELECT COUNT(1) FROM feeds WHERE url = $1 AND channel_id = $2", 2, NULL, params, NULL, NULL, 0);
+	PGresult *res = PQexecParams(conn, "SELECT COUNT(1) FROM feeds WHERE url = $1 AND channel_id = $2", 2, NULL, params, NULL, NULL, 1);
 	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
 		log_error(PQresultErrorMessage(res));
 		PQclear(res);

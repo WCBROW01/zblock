@@ -63,7 +63,10 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 
 	// all this SQL stuff should *really* be extracted somewhere else
 	// maybe make a function where you can do a lookup with a quantity and offset
-	PGresult *database_res = PQexec(database_conn, "SELECT url, last_pubDate, channel_id from feeds");
+	PGresult *database_res = PQexecParams(
+		database_conn, "SELECT url, last_pubDate, channel_id from feeds",
+		0, NULL, NULL, NULL, NULL, 1
+	);
 	if (PQresultStatus(database_res) != PGRES_TUPLES_OK) {
 		log_error("Unable to retrieve feed list: %s", PQresultErrorMessage(database_res));
 		PQclear(database_res);
