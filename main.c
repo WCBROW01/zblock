@@ -236,6 +236,27 @@ static void bot_command_add(struct discord *client, const struct discord_interac
 	discord_create_interaction_response(client, event->id, event->token, &res, NULL);
 }
 
+static void bot_command_remove(struct discord *client, const struct discord_interaction *event) {
+	char *url = event->data->options->array[0].value;
+	zblock_feed_info_err error = zblock_feed_info_delete(database_conn, url, event->channel_id);
+	if (error) {
+		// write error message
+		snprintf(msg, sizeof(msg), "Error removing feed: %s", zblock_feed_info_strerror(error));
+	} else {
+		// write the confirmation message
+		snprintf(msg, sizeof(msg), "The following feed has been successfully removed from this channel:\n`%s`", url);
+	}
+	
+	struct discord_interaction_response res = {
+		.type = DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE,
+		.data = &(struct discord_interaction_callback_data) {
+			.content = msg
+		}
+	};
+
+	discord_create_interaction_response(client, event->id, event->token, &res, NULL);
+}
+
 static void bot_command_list(struct discord *client, const struct discord_interaction *event) {
 	BOT_COMMAND_NOT_IMPLEMENTED();
 }
@@ -278,6 +299,22 @@ static struct bot_command commands[] = {
 			})
 		},
 		.func  = &bot_command_add
+	},
+	{
+		.cmd = {
+			.name = "remove",
+			.description = "Remove an RSS feed",
+			.default_permission = true,
+			.options = CREATE_OPTIONS({
+				{
+					.type = DISCORD_APPLICATION_OPTION_STRING,
+					.name  = "url",
+					.description = "The URL of your feed",
+					.required = true
+				}
+			})
+		},
+		.func  = &bot_command_remove
 	},
 	{
 		.cmd = {
