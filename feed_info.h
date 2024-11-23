@@ -42,6 +42,9 @@ zblock_feed_info_err zblock_feed_info_exists(PGconn *conn, const char *url, u64s
 // Insert new feed into the database
 zblock_feed_info_err zblock_feed_info_insert(PGconn *conn, zblock_feed_info *feed);
 
+// deletes feed from the database
+zblock_feed_info_err zblock_feed_info_delete(PGconn *conn, const char *url, u64snowflake channel_id);
+
 // updates the last_pubDate field of a given feed in the database
 zblock_feed_info_err zblock_feed_info_update(PGconn *conn, zblock_feed_info_minimal *feed);
 

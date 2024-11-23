@@ -3,6 +3,8 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdint.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -66,7 +68,7 @@ zblock_feed_info_err zblock_feed_info_insert(PGconn *conn, zblock_feed_info *fee
 
 	// check if the feed already exists
 	{
-		int feed_exists = 0;
+		int feed_exists;
 		zblock_feed_info_err exists_error = zblock_feed_info_exists(conn, feed->url, feed->channel_id, &feed_exists);
 		if (exists_error) {
 			return exists_error;
@@ -93,6 +95,40 @@ zblock_feed_info_err zblock_feed_info_insert(PGconn *conn, zblock_feed_info *fee
 	}
 	
 	PQclear(insert_res);
+	return result;
+}
+
+// deletes feed from the database
+zblock_feed_info_err zblock_feed_info_delete(PGconn *conn, const char *url, u64snowflake channel_id) {
+	if (!conn) return ZBLOCK_FEED_INFO_INVALID_ARGS;
+	
+	// check if the feed already exists
+	{
+		int feed_exists;
+		zblock_feed_info_err exists_error = zblock_feed_info_exists(conn, url, channel_id, &feed_exists);
+		if (exists_error) {
+			return exists_error;
+		} else if (!feed_exists) {
+			return ZBLOCK_FEED_INFO_NOT_EXIST;
+		}
+	}
+	
+	// I don't want to deal with the extra fuss that is sending these in binary format
+	char channel_id_str[21];
+	snprintf(channel_id_str, sizeof(channel_id_str), "%" PRIu64, channel_id);
+	const char *const params[] = {url, channel_id_str};
+	PGresult *res = PQexecParams(conn,
+		"DELETE FROM feeds WHERE url = $1 AND channel_id = $2",
+		2, NULL, params, NULL, NULL, 0
+	);
+	
+	zblock_feed_info_err result = ZBLOCK_FEED_INFO_OK;
+	if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+		log_error(PQresultErrorMessage(res));
+		result = ZBLOCK_FEED_INFO_DBERROR;
+	}
+	
+	PQclear(res);
 	return result;
 }
 
