@@ -82,7 +82,7 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 	for (int i = 0; i < nfeeds; ++i) {
 		feed_list[i].info.url = PQgetvalue(database_res, i, 0);
 		feed_list[i].info.last_pubDate = PQgetvalue(database_res, i, 1);
-		feed_list[i].info.channel_id = *(u64snowflake *) PQgetvalue(database_res, i, 2);
+		feed_list[i].info.channel_id = be64toh(*(uint64_t *) PQgetvalue(database_res, i, 2));
 	}
 	
 	// get all those feeds

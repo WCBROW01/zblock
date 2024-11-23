@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <endian.h>
 
 #include <concord/discord.h>
 #include <concord/log.h>
@@ -57,7 +58,7 @@ zblock_feed_info_err zblock_feed_info_exists(PGconn *conn, const char *url, u64s
 		return ZBLOCK_FEED_INFO_DBERROR;
 	}
 	
-	*exists = *(int *) PQgetvalue(res, 0, 0);
+	*exists = be32toh(*(uint32_t *) PQgetvalue(res, 0, 0));
 	PQclear(res);
 	return ZBLOCK_FEED_INFO_OK;
 }
