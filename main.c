@@ -74,7 +74,7 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 	int nfeeds = PQntuples(database_res);
 	zblock_feed_buffer *feed_list = malloc(nfeeds * sizeof(*feed_list));
 	if (!feed_list) {
-		// well there goes that idea
+		log_error("Unable to retrieve feed list: %s", strerror(errno));
 		PQclear(database_res);
 		return;
 	}
@@ -89,6 +89,7 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 	CURLM *multi = curl_multi_init();
 	if (!multi) {
 		// oh no
+		log_error("Unable to retrieve feed list: NULL pointer from curl_multi_init()");
 		goto all_done;
 	}
 	
@@ -371,6 +372,8 @@ static void on_interaction(struct discord *client, const struct discord_interact
 }
 
 int main(void) {
+	int exit_code = 0;	
+	
 	srand(time(NULL));
 	struct discord *client = discord_config_init("config.json");
 	zblock_config_load(client);
@@ -379,6 +382,7 @@ int main(void) {
 	database_conn = PQconnectdb(zblock_config.conninfo);
 	if (!database_conn) {
 		log_fatal("Failed to connect to database.");
+		exit_code = 1;
 		goto cleanup;
 	}
 	
@@ -390,4 +394,6 @@ int main(void) {
 	cleanup:
 	discord_cleanup(client);
 	ccord_global_cleanup();
+	
+	return exit_code;
 }
