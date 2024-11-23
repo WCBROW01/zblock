@@ -95,3 +95,27 @@ zblock_feed_info_err zblock_feed_info_insert(PGconn *conn, zblock_feed_info *fee
 	PQclear(insert_res);
 	return result;
 }
+
+// updates the last_pubDate field of a given feed in the database
+zblock_feed_info_err zblock_feed_info_update(PGconn *conn, zblock_feed_info_minimal *feed) {
+	if (!conn || !feed) return ZBLOCK_FEED_INFO_INVALID_ARGS;
+
+	char channel_id_str[21]; // hold a 64-bit int in decimal form
+	snprintf(channel_id_str, sizeof(channel_id_str), "%ld", feed->channel_id);
+	
+	const char *const update_params[] = {feed->last_pubDate, feed->url, channel_id_str};
+	// save the updated pubDate to disk once that's implemented
+	PGresult *update_res = PQexecParams(conn,
+		"UPDATE feeds SET last_pubDate = $1 WHERE url = $2 AND channel_id = $3",
+		3, NULL, update_params, NULL, NULL, 0
+	);
+	
+	zblock_feed_info_err result = ZBLOCK_FEED_INFO_OK;
+	if (PQresultStatus(update_res) != PGRES_COMMAND_OK) {
+		log_error("Failed to update feed: %s", PQresultErrorMessage(update_res));
+		result = ZBLOCK_FEED_INFO_DBERROR;
+	}
+	
+	PQclear(update_res);
+	return result;
+}

@@ -155,21 +155,8 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 							}
 							
 							if (update_pubDate) {
-								char *current_pubDate = mrss_feed->item->pubDate;
-								char channel_id_str[21]; // hold a 64-bit int in decimal form
-								snprintf(channel_id_str, sizeof(channel_id_str), "%ld", feed_buffer->info.channel_id);
-								
-								const char *const update_params[] = {current_pubDate, feed_buffer->info.url, channel_id_str};
-								// save the updated pubDate to disk once that's implemented
-								PGresult *update_res = PQexecParams(database_conn,
-									"UPDATE feeds SET last_pubDate = $1 WHERE url = $2 AND channel_id = $3",
-									3, NULL, update_params, NULL, NULL, 0
-								);
-								
-								if (PQresultStatus(update_res) != PGRES_COMMAND_OK) {
-									log_error("Failed to update pubDate: %s", PQresultErrorMessage(update_res)); // cry
-								}
-								PQclear(update_res);
+								feed_buffer->info.url = mrss_feed->item->pubDate;
+								zblock_feed_info_update(database_conn, &feed_buffer->info);
 							}
 							
 							// done with our feed!
