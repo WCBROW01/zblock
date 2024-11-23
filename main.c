@@ -217,25 +217,6 @@ static void bot_command_add(struct discord *client, const struct discord_interac
 	feed.channel_id = event->channel_id;
 	feed.guild_id = event->guild_id;
 	
-	// check if it already exists
-	char channel_id_str[21]; // hold a 64-bit int in decimal form
-	snprintf(channel_id_str, sizeof(channel_id_str), "%ld", feed.channel_id);
-	
-	const char *const select_params[] = {feed.url, channel_id_str};
-	PGresult *select_res = PQexecParams(database_conn, "SELECT * from feeds WHERE url = $1 AND channel_id = $2", 2, NULL, select_params, NULL, NULL, 0);
-	if (PQresultStatus(select_res) != PGRES_TUPLES_OK) {
-		snprintf(msg, sizeof(msg), "Error adding feed: %s", PQresultErrorMessage(select_res));
-		PQclear(select_res);
-	}
-	
-	if (PQntuples(select_res) > 0) {
-		PQclear(select_res);
-		snprintf(msg, sizeof(msg), "Error adding feed: it has already been added to this channel");
-		goto send_msg;
-	} else {
-		PQclear(select_res); // don't actually do anything with the contents of the query
-	}
-	
 	mrss_t *mrss_feed;
 	mrss_error_t mrss_error = mrss_parse_url(feed.url, &mrss_feed);
 	if (mrss_error) {
@@ -246,22 +227,15 @@ static void bot_command_add(struct discord *client, const struct discord_interac
 	feed.title = mrss_feed->title;
 	feed.last_pubDate = mrss_feed->item->pubDate;
 	
-	char guild_id_str[21];
-	snprintf(guild_id_str, sizeof(guild_id_str), "%ld", feed.guild_id);
-	const char *const insert_params[] = {feed.url, feed.last_pubDate, channel_id_str, feed.title, guild_id_str};
-	PGresult *insert_res = PQexecParams(database_conn,
-		"INSERT INTO feeds (url, last_pubDate, channel_id, title, guild_id) VALUES ($1, $2, $3, $4, $5)",
-		5, NULL, insert_params, NULL, NULL, 0
-	);
-	if (PQresultStatus(insert_res) != PGRES_COMMAND_OK) {
+	zblock_feed_info_err insert_res = zblock_feed_info_insert(database_conn, &feed);
+	if (insert_res) {
 		// write error message
-		snprintf(msg, sizeof(msg), "Error adding feed: %s", PQresultErrorMessage(insert_res));
+		snprintf(msg, sizeof(msg), "Error adding feed: %s", zblock_feed_info_strerror(insert_res));
 	} else {
 		// write the confirmation message
 		snprintf(msg, sizeof(msg), "The following feed has been successfully added to this channel:\n`%s`", feed.url);
 	}
 	
-	PQclear(insert_res);
 	mrss_free(mrss_feed);
 	
 	send_msg:

@@ -23,8 +23,10 @@ typedef struct {
 
 typedef enum {
 	ZBLOCK_FEED_INFO_OK,
-	ZBLOCK_FEED_INFO_NULL,
-	ZBLOCK_FEED_INFO_POSTGRES,
+	ZBLOCK_FEED_INFO_INVALID_ARGS,
+	ZBLOCK_FEED_INFO_DBERROR,
+	ZBLOCK_FEED_INFO_EXISTS,
+	ZBLOCK_FEED_INFO_NOT_EXIST,
 	ZBLOCK_FEED_INFO_ERRORCOUNT
 } zblock_feed_info_err;
 
@@ -33,6 +35,9 @@ time_t pubDate_to_time_t(char *s);
 
 // returns a string about the result of a feed_info function
 const char *zblock_feed_info_strerror(zblock_feed_info_err error);
+
+// check if the feed currently exists. the result is in the exists pointer.
+zblock_feed_info_err zblock_feed_info_exists(PGconn *conn, const char *url, u64snowflake channel_id, int *exists);
 
 // Insert new feed into the database
 zblock_feed_info_err zblock_feed_info_insert(PGconn *conn, zblock_feed_info *feed);
