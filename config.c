@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <concord/discord.h>
 
 #include "config.h"
