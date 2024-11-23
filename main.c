@@ -109,6 +109,7 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 		curl_easy_setopt(feed_handle, CURLOPT_PRIVATE, &feed_list[i]);
 		CURLMcode mc = curl_multi_add_handle(multi, feed_handle);
 		if (mc) {
+			log_error("Unable to retrieve feed list: %s", curl_multi_strerror(mc));
 			curl_easy_cleanup(feed_handle);
 			fclose(feed_list[i].fp);
 			free(feed_list[i].buf);
