@@ -50,6 +50,7 @@ zblock_feed_info_err zblock_feed_info_exists(PGconn *conn, const char *url, u64s
 	const char *const params[] = {url, channel_id_str};
 	PGresult *res = PQexecParams(conn, "SELECT COUNT(1) FROM feeds WHERE url = $1 AND channel_id = $2", 2, NULL, params, NULL, NULL, 0);
 	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+		log_error(PQresultErrorMessage(res));
 		PQclear(res);
 		return ZBLOCK_FEED_INFO_DBERROR;
 	}
@@ -87,6 +88,7 @@ zblock_feed_info_err zblock_feed_info_insert(PGconn *conn, zblock_feed_info *fee
 	
 	zblock_feed_info_err result = ZBLOCK_FEED_INFO_OK;
 	if (PQresultStatus(insert_res) != PGRES_COMMAND_OK) {
+		log_error(PQresultErrorMessage(insert_res));
 		result = ZBLOCK_FEED_INFO_DBERROR;
 	}
 	
