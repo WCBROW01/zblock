@@ -43,9 +43,6 @@ struct bot_command {
 	discord_create_interaction_response(client, event->id, event->token, &res, NULL); \
 } while (0)
 
-// default interval for the feed retrieval timer
-#define TIMER_INTERVAL 600
-
 typedef struct {
 	zblock_feed_info_minimal info;
 	FILE *fp;
@@ -69,24 +66,8 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 	);
 	if (PQresultStatus(database_res) != PGRES_TUPLES_OK) {
 		log_error("Unable to retrieve feed list: %s", PQresultErrorMessage(database_res));
-		PQclear(database_res);
-		return;
-	}
-	
-	// get all the required feed info to send messages
-	int nfeeds = PQntuples(database_res);
-	zblock_feed_buffer *feed_list = malloc(nfeeds * sizeof(*feed_list));
-	if (!feed_list) {
-		log_error("Unable to retrieve feed list: %s", strerror(errno));
-		PQclear(database_res);
-		return;
-	}
-	
-	for (int i = 0; i < nfeeds; ++i) {
-		feed_list[i].info.url = PQgetvalue(database_res, i, 0);
-		feed_list[i].info.last_pubDate = PQgetvalue(database_res, i, 1);
-		feed_list[i].info.channel_id = be64toh(*(uint64_t *) PQgetvalue(database_res, i, 2));
-	}
+		goto all_done;
+	}	
 	
 	// get all those feeds
 	CURLM *multi = curl_multi_init();
@@ -96,89 +77,97 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 		goto all_done;
 	}
 	
+	// put running handles up here so we can start transfers now instead of later
+	int running_handles;
+	// get all the required feed info to send messages
+	int nfeeds = PQntuples(database_res);
 	for (int i = 0; i < nfeeds; ++i) {
-		feed_list[i].fp = open_memstream(&feed_list[i].buf, &feed_list[i].bufsize);
-		if (!feed_list[i].fp) continue; // fail gracefully
+		zblock_feed_buffer *feed_buffer = malloc(sizeof(*feed_buffer));
+		if (!feed_buffer) {
+			log_error("Failure allocating feed buffer: %s", strerror(errno));
+			continue;
+		}
+		feed_buffer->info.url = PQgetvalue(database_res, i, 0);
+		feed_buffer->info.last_pubDate = PQgetvalue(database_res, i, 1);
+		feed_buffer->info.channel_id = be64toh(*(uint64_t *) PQgetvalue(database_res, i, 2));
+		feed_buffer->fp = open_memstream(&feed_buffer->buf, &feed_buffer->bufsize);
+		if (!feed_buffer->fp) continue; // fail gracefully
 	
 		CURL *feed_handle = curl_easy_init();
 		if (!feed_handle) {
-			fclose(feed_list[i].fp);
-			free(feed_list[i].buf);
+			fclose(feed_buffer->fp);
+			free(feed_buffer->buf);
 			continue;
 		}
 		
-		curl_easy_setopt(feed_handle, CURLOPT_URL, feed_list[i].info.url);
-		curl_easy_setopt(feed_handle, CURLOPT_WRITEDATA, feed_list[i].fp);
-		curl_easy_setopt(feed_handle, CURLOPT_PRIVATE, &feed_list[i]);
+		curl_easy_setopt(feed_handle, CURLOPT_URL, feed_buffer->info.url);
+		curl_easy_setopt(feed_handle, CURLOPT_WRITEDATA, feed_buffer->fp);
+		curl_easy_setopt(feed_handle, CURLOPT_PRIVATE, feed_buffer);
 		CURLMcode mc = curl_multi_add_handle(multi, feed_handle);
 		if (mc) {
 			log_error("Unable to retrieve feed list: %s", curl_multi_strerror(mc));
 			curl_easy_cleanup(feed_handle);
-			fclose(feed_list[i].fp);
-			free(feed_list[i].buf);
+			fclose(feed_buffer->fp);
+			free(feed_buffer->buf);
 			continue;
 		}
+		curl_multi_perform(multi, &running_handles);
 	}
 	
 	// it's time
-	int running_handles_prev = 0;
-	int running_handles;
 	do {
 		CURLMcode mc = curl_multi_perform(multi, &running_handles);
-		if (running_handles < running_handles_prev) {
-			running_handles_prev = running_handles;
-			
-			CURLMsg *msg;
-			int msgs_in_queue;
-			do {
-				msg = curl_multi_info_read(multi, &msgs_in_queue);
-				if (msg && msg->msg == CURLMSG_DONE) {
-					CURL *handle = msg->easy_handle;
-					// get our buffer out
-					zblock_feed_buffer *feed_buffer;
-					curl_easy_getinfo(handle, CURLINFO_PRIVATE, &feed_buffer);
-					fclose(feed_buffer->fp); // close the file descriptor for the buffer (also flushes buffer)
-					if (!msg->data.result) {
-						// hell yeah parse that RSS feed
-						mrss_t *mrss_feed;
-						mrss_error_t mrss_err = mrss_parse_buffer(feed_buffer->buf, feed_buffer->bufsize, &mrss_feed);
-						if (!mrss_err) {
-							// get publication date of entries send any new ones
-							time_t last_pubDate_time = pubDate_to_time_t(feed_buffer->info.last_pubDate);
-							mrss_item_t *item = mrss_feed->item;
-							bool update_pubDate = false;
-							while (item && pubDate_to_time_t(item->pubDate) > last_pubDate_time) {
-								update_pubDate = true;
-								
-								// Send new entry in the feed
-								char msg[DISCORD_MAX_MESSAGE_LEN];
-								snprintf(msg, sizeof(msg), "### %s\n[%s](%s)", mrss_feed->title, mrss_feed->item->title, mrss_feed->item->link);
-								struct discord_create_message res = { .content = msg };
-								discord_create_message(client, feed_buffer->info.channel_id, &res, NULL);
-								item = item->next;
-							}
+		CURLMsg *msg;
+		int msgs_in_queue;
+		do {
+			msg = curl_multi_info_read(multi, &msgs_in_queue);
+			if (msg && msg->msg == CURLMSG_DONE) {
+				CURL *handle = msg->easy_handle;
+				// get our buffer out
+				zblock_feed_buffer *feed_buffer;
+				curl_easy_getinfo(handle, CURLINFO_PRIVATE, &feed_buffer);
+				fclose(feed_buffer->fp); // close the file descriptor for the buffer (also flushes buffer)
+				if (!msg->data.result) {
+					// hell yeah parse that RSS feed
+					mrss_t *mrss_feed;
+					mrss_error_t mrss_err = mrss_parse_buffer(feed_buffer->buf, feed_buffer->bufsize, &mrss_feed);
+					if (!mrss_err) {
+						// get publication date of entries and send any new ones
+						mrss_item_t *item = mrss_feed->item;
+						time_t last_pubDate_time = pubDate_to_time_t(feed_buffer->info.last_pubDate);
+						bool update_pubDate = false;
+						while (item && pubDate_to_time_t(item->pubDate) > last_pubDate_time) {
+							update_pubDate = true;
 							
-							if (update_pubDate) {
-								feed_buffer->info.last_pubDate = mrss_feed->item->pubDate;
-								zblock_feed_info_update(database_conn, &feed_buffer->info);
-							}
-							
-							// done with our feed!
-							mrss_free(mrss_feed);
-						} else {
-							log_error("Error parsing feed: %s\n", mrss_strerror(mrss_err));
+							// Send new entry in the feed
+							char msg[DISCORD_MAX_MESSAGE_LEN];
+							snprintf(msg, sizeof(msg), "### %s\n[%s](%s)", mrss_feed->title, mrss_feed->item->title, mrss_feed->item->link);
+							struct discord_create_message res = { .content = msg };
+							discord_create_message(client, feed_buffer->info.channel_id, &res, NULL);
+							item = item->next;
 						}
+						
+						if (update_pubDate) {
+							feed_buffer->info.last_pubDate = mrss_feed->item->pubDate;
+							zblock_feed_info_update(database_conn, &feed_buffer->info);
+						}
+						
+						// done with our feed!
+						mrss_free(mrss_feed);
 					} else {
-						log_error("Error downloading RSS feed: %s\n", curl_easy_strerror(msg->data.result));
+						log_error("Error parsing feed: %s\n", mrss_strerror(mrss_err));
 					}
-					
-					// free our buffers
-					curl_multi_remove_handle(multi, handle);
-					curl_easy_cleanup(handle);
-					free(feed_buffer->buf);
+				} else {
+					log_error("Error downloading RSS feed: %s\n", curl_easy_strerror(msg->data.result));
 				}
-			} while (msg);
-		}
+				
+				// free our buffers
+				curl_multi_remove_handle(multi, handle);
+				curl_easy_cleanup(handle);
+				free(feed_buffer->buf);
+				free(feed_buffer);
+			}
+		} while (msg);
 		
 		if (!mc && running_handles) {
 			mc = curl_multi_poll(multi, NULL, 0, 300, NULL);
@@ -188,15 +177,12 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 			log_fatal("curl_multi_poll(): %s", curl_multi_strerror(mc));
 			exit(1);
 		}
-		
-		running_handles_prev = running_handles;
 	} while (running_handles);
 	
 	curl_multi_cleanup(multi);
 	
 	// processing is done
 	all_done:
-	free(feed_list);
 	PQclear(database_res);
 }
 
@@ -372,6 +358,9 @@ static void on_interaction(struct discord *client, const struct discord_interact
 	};
 	discord_create_interaction_response(client, event->id, event->token, &res, NULL);
 }
+
+// default interval for the feed retrieval timer (in ms)
+#define TIMER_INTERVAL 600000
 
 int main(void) {
 	int exit_code = 0;	
