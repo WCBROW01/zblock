@@ -82,7 +82,9 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 	PGresult *database_res;
 	while ((database_res = PQgetResult(database_conn))) {
 		if (PQresultStatus(database_res) != PGRES_SINGLE_TUPLE) {
-			log_error("Unable to retrieve feed: %s", PQresultErrorMessage(database_res));
+			if (PQresultStatus(database_res) != PGRES_TUPLES_OK) {
+				log_error("Unable to retrieve feeds: %s", PQresultErrorMessage(database_res));			
+			}
 			goto db_loop_end;
 		}
 		
