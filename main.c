@@ -393,8 +393,11 @@ static void on_interaction(struct discord *client, const struct discord_interact
 	discord_create_interaction_response(client, event->id, event->token, &res, NULL);
 }
 
-// default interval for the feed retrieval timer (in ms)
-#define TIMER_INTERVAL 600000
+// delay before the first feed retrieval (in ms)
+#define FEED_TIMER_DELAY 15000
+
+// interval for the feed retrieval timer (in ms)
+#define FEED_TIMER_INTERVAL 600000
 
 int main(void) {
 	int exit_code = 0;	
@@ -415,7 +418,7 @@ int main(void) {
 	
 	discord_set_on_ready(client, &on_ready);
 	discord_set_on_interaction_create(client, &on_interaction);
-	discord_timer_interval(client, timer_retrieve_feeds, NULL, NULL, 0, TIMER_INTERVAL, -1);
+	discord_timer_interval(client, timer_retrieve_feeds, NULL, NULL, FEED_TIMER_DELAY, FEED_TIMER_INTERVAL, -1);
 	discord_run(client);
 	
 	PQfinish(database_conn);
