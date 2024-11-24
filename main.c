@@ -152,7 +152,7 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 								
 								// Send new entry in the feed
 								char msg[DISCORD_MAX_MESSAGE_LEN];
-								snprintf(msg, sizeof(msg), "## %s\n### %s\n%s", mrss_feed->title, mrss_feed->item->title, mrss_feed->item->link);
+								snprintf(msg, sizeof(msg), "### %s\n[%s](%s)", mrss_feed->title, mrss_feed->item->title, mrss_feed->item->link);
 								struct discord_create_message res = { .content = msg };
 								discord_create_message(client, feed_buffer->info.channel_id, &res, NULL);
 								item = item->next;
