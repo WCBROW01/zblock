@@ -5,6 +5,7 @@
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#include <locale.h>
 #include <time.h>
 
 #include <curl/curl.h>
@@ -133,8 +134,8 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 					mrss_error_t mrss_err = mrss_parse_buffer(feed_buffer->buf, feed_buffer->bufsize, &mrss_feed);
 					if (!mrss_err) {
 						// get publication date of entries and send any new ones
-						mrss_item_t *item = mrss_feed->item;
 						time_t last_pubDate_time = pubDate_to_time_t(feed_buffer->info.last_pubDate);
+						mrss_item_t *item = mrss_feed->item;
 						bool update_pubDate = false;
 						while (item && pubDate_to_time_t(item->pubDate) > last_pubDate_time) {
 							update_pubDate = true;
@@ -365,6 +366,8 @@ static void on_interaction(struct discord *client, const struct discord_interact
 int main(void) {
 	int exit_code = 0;	
 	
+	// set locale for time
+	setlocale(LC_ALL, "C");
 	srand(time(NULL));
 	struct discord *client = discord_config_init("config.json");
 	zblock_config_load(client);

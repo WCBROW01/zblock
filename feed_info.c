@@ -40,7 +40,7 @@ time_t pubDate_to_time_t(char *s) {
 		if(!strptime(s, "%a, %d %b %Y %T %Z", &tm)) return 0; // invalid time
 	}
 	
-	return mktime(&tm);
+	return timegm(&tm);
 }
 
 // check if the feed currently exists. the result is in the exists pointer.
