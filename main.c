@@ -137,6 +137,7 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 					// get our buffer out
 					zblock_feed_buffer *feed_buffer;
 					curl_easy_getinfo(handle, CURLINFO_PRIVATE, &feed_buffer);
+					fclose(feed_buffer->fp); // close the file descriptor for the buffer (also flushes buffer)
 					if (!msg->data.result) {
 						// hell yeah parse that RSS feed
 						mrss_t *mrss_feed;
@@ -158,7 +159,7 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 							}
 							
 							if (update_pubDate) {
-								feed_buffer->info.url = mrss_feed->item->pubDate;
+								feed_buffer->info.last_pubDate = mrss_feed->item->pubDate;
 								zblock_feed_info_update(database_conn, &feed_buffer->info);
 							}
 							
@@ -168,19 +169,18 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 							log_error("Error parsing feed: %s\n", mrss_strerror(mrss_err));
 						}
 					} else {
-						log_error("Error downloading RSS feed: %s\n", msg->data.result);
+						log_error("Error downloading RSS feed: %s\n", curl_easy_strerror(msg->data.result));
 					}
 					
 					// free our buffers
 					curl_multi_remove_handle(multi, handle);
 					curl_easy_cleanup(handle);
-					fclose(feed_buffer->fp);
 					free(feed_buffer->buf);
 				}
 			} while (msg);
 		}
 		
-		if (!mc && running_handles > 0) {
+		if (!mc && running_handles) {
 			mc = curl_multi_poll(multi, NULL, 0, 300, NULL);
 		}
 		if (mc) {
@@ -188,7 +188,9 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 			log_fatal("curl_multi_poll(): %s", curl_multi_strerror(mc));
 			exit(1);
 		}
-	} while (running_handles > 0);
+		
+		running_handles_prev = running_handles;
+	} while (running_handles);
 	
 	curl_multi_cleanup(multi);
 	
@@ -196,7 +198,6 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 	all_done:
 	free(feed_list);
 	PQclear(database_res);
-	
 }
 
 static void bot_command_add(struct discord *client, const struct discord_interaction *event) {
