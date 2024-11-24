@@ -32,13 +32,13 @@ const char *zblock_feed_info_strerror(zblock_feed_info_err error) {
 	return error < 0 || error >= ZBLOCK_FEED_INFO_ERRORCOUNT ? "Unspecified error" : ZBLOCK_FEED_INFO_ERRORS[error];
 }
 
-// format string for for the time format of pubDate
-#define PUBDATE_FMT "%a, %d %b %Y %T %z"
-
 time_t pubDate_to_time_t(char *s) {
 	struct tm tm;
-	char *res = strptime(s, PUBDATE_FMT, &tm);
-	if (!res || !*res) return 0; // invalid time
+	
+	// time format with e.g. +0000
+	if (!strptime(s, "%a, %d %b %Y %T %z", &tm)) { // try the other time format with timezone
+		if(!strptime(s, "%a, %d %b %Y %T %Z", &tm)) return 0; // invalid time
+	}
 	
 	return mktime(&tm);
 }
