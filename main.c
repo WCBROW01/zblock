@@ -59,46 +59,70 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 	// not doing anything with the timer yet
 	(void) timer;
 
-	// all this SQL stuff should *really* be extracted somewhere else
-	// maybe make a function where you can do a lookup with a quantity and offset
-	PGresult *database_res = PQexecParams(
-		database_conn, "SELECT url, last_pubDate, channel_id from feeds",
-		0, NULL, NULL, NULL, NULL, 1
-	);
-	if (PQresultStatus(database_res) != PGRES_TUPLES_OK) {
-		log_error("Unable to retrieve feed list: %s", PQresultErrorMessage(database_res));
-		goto all_done;
-	}	
-	
-	// get all those feeds
+	// all of this is as asynchronous as I can reasonably make it
 	CURLM *multi = curl_multi_init();
 	if (!multi) {
 		// oh no
 		log_error("Unable to retrieve feed list: NULL pointer from curl_multi_init()");
-		goto all_done;
+		return;
 	}
+
+	if (!PQexecParams(
+		database_conn, "SELECT url, last_pubDate, channel_id from feeds",
+		0, NULL, NULL, NULL, NULL, 1
+	)) {
+		log_error("Unable to retrieve feed list: %s", PQerrorMessage(database_conn));
+		return;
+	}
+	PQsetSingleRowMode(database_conn);
 	
 	// put running handles up here so we can start transfers now instead of later
-	int running_handles;
+	int running_handles, total_feeds = 0;
 	// get all the required feed info to send messages
-	int nfeeds = PQntuples(database_res);
-	for (int i = 0; i < nfeeds; ++i) {
+	PGresult *database_res;
+	while ((database_res = PQgetResult(database_conn))) {
+		if (PQresultStatus(database_res) != PGRES_SINGLE_TUPLE) {
+			log_error("Unable to retrieve feed: %s", PQresultErrorMessage(database_res));
+			goto db_loop_end;
+		}
+		
+		++total_feeds;
 		zblock_feed_buffer *feed_buffer = malloc(sizeof(*feed_buffer));
 		if (!feed_buffer) {
 			log_error("Failure allocating feed buffer: %s", strerror(errno));
-			continue;
+			goto db_loop_end;
 		}
-		feed_buffer->info.url = PQgetvalue(database_res, i, 0);
-		feed_buffer->info.last_pubDate = PQgetvalue(database_res, i, 1);
-		feed_buffer->info.channel_id = be64toh(*(uint64_t *) PQgetvalue(database_res, i, 2));
+		feed_buffer->info.url = strdup(PQgetvalue(database_res, 0, 0));
+		if (!feed_buffer->info.url) {
+			log_error("Failure allocating feed buffer: %s", strerror(errno));
+			free(feed_buffer);
+			goto db_loop_end;
+		}
+		feed_buffer->info.last_pubDate = strdup(PQgetvalue(database_res, 0, 1));
+		if (!feed_buffer->info.url) {
+			log_error("Failure allocating feed buffer: %s", strerror(errno));
+			free(feed_buffer->info.url);
+			free(feed_buffer);
+			goto db_loop_end;
+		}
+		feed_buffer->info.channel_id = be64toh(*(uint64_t *) PQgetvalue(database_res, 0, 2));
 		feed_buffer->fp = open_memstream(&feed_buffer->buf, &feed_buffer->bufsize);
-		if (!feed_buffer->fp) continue; // fail gracefully
+		if (!feed_buffer->fp) {
+			log_error("Unable to retrieve feed: %s", strerror(errno));
+			free(feed_buffer->info.last_pubDate);
+			free(feed_buffer->info.url);
+			free(feed_buffer);
+			goto db_loop_end;
+		}
 	
 		CURL *feed_handle = curl_easy_init();
 		if (!feed_handle) {
 			fclose(feed_buffer->fp);
 			free(feed_buffer->buf);
-			continue;
+			free(feed_buffer->info.last_pubDate);
+			free(feed_buffer->info.url);
+			free(feed_buffer);
+			goto db_loop_end;
 		}
 		
 		curl_easy_setopt(feed_handle, CURLOPT_URL, feed_buffer->info.url);
@@ -106,15 +130,22 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 		curl_easy_setopt(feed_handle, CURLOPT_PRIVATE, feed_buffer);
 		CURLMcode mc = curl_multi_add_handle(multi, feed_handle);
 		if (mc) {
-			log_error("Unable to retrieve feed list: %s", curl_multi_strerror(mc));
+			log_error("Unable to retrieve feed: %s", curl_multi_strerror(mc));
 			curl_easy_cleanup(feed_handle);
 			fclose(feed_buffer->fp);
 			free(feed_buffer->buf);
-			continue;
+			free(feed_buffer->info.last_pubDate);
+			free(feed_buffer->info.url);
+			free(feed_buffer);
+			goto db_loop_end;
 		}
 		curl_multi_perform(multi, &running_handles);
+		
+		db_loop_end:
+		PQclear(database_res);
 	}
 	
+	int successful_feeds = 0;
 	// it's time
 	do {
 		CURLMcode mc = curl_multi_perform(multi, &running_handles);
@@ -133,6 +164,7 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 					mrss_t *mrss_feed;
 					mrss_error_t mrss_err = mrss_parse_buffer(feed_buffer->buf, feed_buffer->bufsize, &mrss_feed);
 					if (!mrss_err) {
+						++successful_feeds;
 						// get publication date of entries and send any new ones
 						time_t last_pubDate_time = pubDate_to_time_t(feed_buffer->info.last_pubDate);
 						mrss_item_t *item = mrss_feed->item;
@@ -149,23 +181,26 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 						}
 						
 						if (update_pubDate) {
-							feed_buffer->info.last_pubDate = mrss_feed->item->pubDate;
-							zblock_feed_info_update(database_conn, &feed_buffer->info);
+							zblock_feed_info_minimal updated_feed = feed_buffer->info;
+							updated_feed.last_pubDate = mrss_feed->item->pubDate;
+							zblock_feed_info_update(database_conn, &updated_feed);
 						}
 						
 						// done with our feed!
 						mrss_free(mrss_feed);
 					} else {
-						log_error("Error parsing feed: %s\n", mrss_strerror(mrss_err));
+						log_error("Error parsing feed at %s: %s\n", feed_buffer->info.url, mrss_strerror(mrss_err));
 					}
 				} else {
-					log_error("Error downloading RSS feed: %s\n", curl_easy_strerror(msg->data.result));
+					log_error("Error downloading RSS feed at %s: %s\n", feed_buffer->info.url, curl_easy_strerror(msg->data.result));
 				}
 				
 				// free our buffers
 				curl_multi_remove_handle(multi, handle);
 				curl_easy_cleanup(handle);
 				free(feed_buffer->buf);
+				free(feed_buffer->info.last_pubDate);
+				free(feed_buffer->info.url);
 				free(feed_buffer);
 			}
 		} while (msg);
@@ -180,11 +215,9 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 		}
 	} while (running_handles);
 	
-	curl_multi_cleanup(multi);
-	
 	// processing is done
-	all_done:
-	PQclear(database_res);
+	curl_multi_cleanup(multi);
+	log_info("Retrieved %d of %d feeds!", successful_feeds, total_feeds);
 }
 
 static void bot_command_add(struct discord *client, const struct discord_interaction *event) {
@@ -334,8 +367,6 @@ static void on_ready(struct discord *client, const struct discord_ready *event) 
 	for (struct bot_command *i = commands; i < commands + sizeof(commands) / sizeof(*commands); ++i) {
 		discord_create_global_application_command(client, event->application->id, &i->cmd, NULL);
 	}
-
-	log_info("Ready!");
 }
 
 static void on_interaction(struct discord *client, const struct discord_interaction *event) {
