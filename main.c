@@ -67,7 +67,7 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 		return;
 	}
 
-	if (!PQexecParams(
+	if (!PQsendQueryParams(
 		database_conn, "SELECT url, last_pubDate, channel_id from feeds",
 		0, NULL, NULL, NULL, NULL, 1
 	)) {
