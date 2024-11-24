@@ -346,9 +346,6 @@ static void on_ready(struct discord *client, const struct discord_ready *event) 
 	for (struct bot_command *i = commands; i < commands + sizeof(commands) / sizeof(*commands); ++i) {
 		discord_create_global_application_command(client, event->application->id, &i->cmd, NULL);
 	}
-	
-	// create feed retrieval timers
-	discord_timer_interval(client, timer_retrieve_feeds, NULL, NULL, 0, TIMER_INTERVAL, -1);
 
 	log_info("Ready!");
 }
@@ -392,6 +389,7 @@ int main(void) {
 	
 	discord_set_on_ready(client, &on_ready);
 	discord_set_on_interaction_create(client, &on_interaction);
+	discord_timer_interval(client, timer_retrieve_feeds, NULL, NULL, 0, TIMER_INTERVAL, -1);
 	discord_run(client);
 	
 	PQfinish(database_conn);
