@@ -48,7 +48,7 @@ zblock_feed_info_err zblock_feed_info_exists(PGconn *conn, const char *url, u64s
 	if (!conn || !exists) return ZBLOCK_FEED_INFO_INVALID_ARGS;
 	
 	uint64_t channel_id_be = htobe64(channel_id);
-	const char *const params[] = {url, (char *) channel_id_be};
+	const char *const params[] = {url, (char *) &channel_id_be};
 	const int param_lengths[] = {0, sizeof(channel_id_be)};
 	const int param_formats[] = {0, 1};
 	PGresult *res = PQexecParams(conn,
@@ -83,7 +83,7 @@ zblock_feed_info_err zblock_feed_info_insert(PGconn *conn, zblock_feed_info *fee
 
 	uint64_t channel_id_be = htobe64(feed->channel_id);
 	uint64_t guild_id_be = htobe64(feed->guild_id);
-	const char *const insert_params[] = {feed->url, feed->last_pubDate, (char *) channel_id_be, feed->title, (char *) guild_id_be};
+	const char *const insert_params[] = {feed->url, feed->last_pubDate, (char *) &channel_id_be, feed->title, (char *) &guild_id_be};
 	const int param_lengths[] = {0, 0, sizeof(channel_id_be), 0, sizeof(guild_id_be)};
 	const int param_formats[] = {0, 0, 1, 0, 1};
 	PGresult *insert_res = PQexecParams(conn,
@@ -117,7 +117,7 @@ zblock_feed_info_err zblock_feed_info_delete(PGconn *conn, const char *url, u64s
 	}
 	
 	uint64_t channel_id_be = htobe64(channel_id);
-	const char *const params[] = {url, (char *) channel_id_be};
+	const char *const params[] = {url, (char *) &channel_id_be};
 	const int param_lengths[] = {0, sizeof(channel_id_be)};
 	const int param_formats[] = {0, 1};
 	PGresult *res = PQexecParams(conn,
@@ -140,7 +140,7 @@ zblock_feed_info_err zblock_feed_info_update(PGconn *conn, zblock_feed_info_mini
 	if (!conn || !feed) return ZBLOCK_FEED_INFO_INVALID_ARGS;
 	
 	uint64_t channel_id_be = htobe64(feed->channel_id);
-	const char *const update_params[] = {feed->last_pubDate, feed->url, (char *) channel_id_be};
+	const char *const update_params[] = {feed->last_pubDate, feed->url, (char *) &channel_id_be};
 	const int param_lengths[] = {0, 0, sizeof(channel_id_be)};
 	const int param_formats[] = {0, 0, 1};
 	PGresult *update_res = PQexecParams(conn,
