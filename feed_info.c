@@ -157,3 +157,27 @@ zblock_feed_info_err zblock_feed_info_update(PGconn *conn, zblock_feed_info_mini
 	PQclear(update_res);
 	return result;
 }
+
+// returns the number of feeds in a channel in count
+zblock_feed_info_err zblock_feed_info_count_channel(PGconn *conn, u64snowflake channel_id, int64_t *count) {
+	if (!conn || !count) return ZBLOCK_FEED_INFO_INVALID_ARGS;
+
+	uint64_t channel_id_be = htobe64(channel_id);
+	const char *const params[] = {(char *) channel_id_be};
+	const int param_lengths[] = {sizeof(channel_id_be)};
+	const int param_formats[] = {1};
+	PGresult *res = PQexecParams(conn,
+		"SELECT COUNT(*) FROM feeds WHERE channel_id = $1::bigint",
+		1, NULL, params, param_lengths, param_formats, 1
+	);
+	
+	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+		log_error(PQresultErrorMessage(res));
+		PQclear(res);
+		return ZBLOCK_FEED_INFO_DBERROR;
+	}
+	
+	*count = be64toh(*(uint64_t *) PQgetvalue(res, 0, 0));
+	PQclear(res);
+	return ZBLOCK_FEED_INFO_OK;
+}
