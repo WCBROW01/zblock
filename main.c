@@ -34,6 +34,9 @@ struct bot_command {
 #define _CREATE_OPTIONS(options) &(struct discord_application_command_options) { .size = sizeof((struct discord_application_command_option[]) options) / sizeof(struct discord_application_command_option), .array = (struct discord_application_command_option[]) options }
 #define CREATE_OPTIONS(...) _CREATE_OPTIONS(P99_PROTECT(__VA_ARGS__))
 
+#define _CREATE_EMBEDS(embeds) &(struct discord_embeds) { .size = sizeof((struct discord_embed[]) embeds) / sizeof(struct discord_embed), .array = (struct discord_embed[]) embeds }
+#define CREATE_EMBEDS(...) _CREATE_EMBEDS(P99_PROTECT(__VA_ARGS__))
+
 #define BOT_COMMAND_NOT_IMPLEMENTED() do { \
 	struct discord_interaction_response res = { \
 		.type = DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE, \
@@ -286,7 +289,20 @@ static void bot_command_remove(struct discord *client, const struct discord_inte
 }
 
 static void bot_command_list(struct discord *client, const struct discord_interaction *event) {
-	BOT_COMMAND_NOT_IMPLEMENTED();
+	struct discord_interaction_response res = {
+		.type = DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE,
+		.data = &(struct discord_interaction_callback_data) {
+			.embeds = CREATE_EMBEDS({
+				{
+					.title = "Feed List",
+					.type = "rich",
+					.description = "List functionality has not been fully implemented yet."
+				}
+			})
+		}
+	};
+
+	discord_create_interaction_response(client, event->id, event->token, &res, NULL);
 }
 
 static void bot_command_help(struct discord *client, const struct discord_interaction *event) {
