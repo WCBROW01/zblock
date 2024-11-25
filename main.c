@@ -70,64 +70,40 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 		return;
 	}
 
-	if (!PQsendQueryParams(
-		database_conn, "SELECT url, last_pubDate, channel_id from feeds",
-		0, NULL, NULL, NULL, NULL, 1
-	)) {
+	// Begin retrieval of feed list objects.
+	if (zblock_feed_info_retrieve_list_begin(database_conn)) {
 		log_error("Unable to retrieve feed list: %s", PQerrorMessage(database_conn));
+		curl_multi_cleanup(multi);
 		return;
 	}
-	PQsetSingleRowMode(database_conn);
 	
 	// put running handles up here so we can start transfers now instead of later
 	int running_handles, total_feeds = 0;
 	// get all the required feed info to send messages
-	PGresult *database_res;
-	while ((database_res = PQgetResult(database_conn))) {
-		if (PQresultStatus(database_res) != PGRES_SINGLE_TUPLE) {
-			if (PQresultStatus(database_res) != PGRES_TUPLES_OK) {
-				log_error("Unable to retrieve feeds: %s", PQresultErrorMessage(database_res));			
-			}
-			goto db_loop_end;
-		}
-		
+	zblock_feed_info_minimal feed_info;
+	while (!zblock_feed_info_retrieve_list_item(database_conn, &feed_info)) {
 		++total_feeds;
 		zblock_feed_buffer *feed_buffer = malloc(sizeof(*feed_buffer));
 		if (!feed_buffer) {
 			log_error("Failure allocating feed buffer: %s", strerror(errno));
-			goto db_loop_end;
+			continue;
 		}
-		feed_buffer->info.url = strdup(PQgetvalue(database_res, 0, 0));
-		if (!feed_buffer->info.url) {
-			log_error("Failure allocating feed buffer: %s", strerror(errno));
-			free(feed_buffer);
-			goto db_loop_end;
-		}
-		feed_buffer->info.last_pubDate = strdup(PQgetvalue(database_res, 0, 1));
-		if (!feed_buffer->info.url) {
-			log_error("Failure allocating feed buffer: %s", strerror(errno));
-			free(feed_buffer->info.url);
-			free(feed_buffer);
-			goto db_loop_end;
-		}
-		feed_buffer->info.channel_id = be64toh(*(uint64_t *) PQgetvalue(database_res, 0, 2));
+		feed_buffer->info = feed_info;
 		feed_buffer->fp = open_memstream(&feed_buffer->buf, &feed_buffer->bufsize);
 		if (!feed_buffer->fp) {
 			log_error("Unable to retrieve feed: %s", strerror(errno));
-			free(feed_buffer->info.last_pubDate);
-			free(feed_buffer->info.url);
+			zblock_feed_info_minimal_free(&feed_buffer->info);
 			free(feed_buffer);
-			goto db_loop_end;
+			continue;
 		}
 	
 		CURL *feed_handle = curl_easy_init();
 		if (!feed_handle) {
 			fclose(feed_buffer->fp);
 			free(feed_buffer->buf);
-			free(feed_buffer->info.last_pubDate);
-			free(feed_buffer->info.url);
+			zblock_feed_info_minimal_free(&feed_buffer->info);
 			free(feed_buffer);
-			goto db_loop_end;
+			continue;
 		}
 		
 		curl_easy_setopt(feed_handle, CURLOPT_URL, feed_buffer->info.url);
@@ -139,15 +115,11 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 			curl_easy_cleanup(feed_handle);
 			fclose(feed_buffer->fp);
 			free(feed_buffer->buf);
-			free(feed_buffer->info.last_pubDate);
-			free(feed_buffer->info.url);
+			zblock_feed_info_minimal_free(&feed_buffer->info);
 			free(feed_buffer);
-			goto db_loop_end;
+			continue;
 		}
 		curl_multi_perform(multi, &running_handles);
-		
-		db_loop_end:
-		PQclear(database_res);
 	}
 	
 	int successful_feeds = 0;

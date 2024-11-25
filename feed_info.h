@@ -27,14 +27,29 @@ typedef enum {
 	ZBLOCK_FEED_INFO_DBERROR,
 	ZBLOCK_FEED_INFO_EXISTS,
 	ZBLOCK_FEED_INFO_NOT_EXIST,
+	ZBLOCK_FEED_INFO_FINISHED,
+	ZBLOCK_FEED_INFO_NOMEM,
 	ZBLOCK_FEED_INFO_ERRORCOUNT
 } zblock_feed_info_err;
+
+// free all information associated with a minimal feed info struct (does not assume the struct was allocated using malloc)
+void zblock_feed_info_minimal_free(zblock_feed_info_minimal *feed_info);
+
+// free all information associated with a feed info struct (does not assume the struct was allocated using malloc)
+void zblock_feed_info_free(zblock_feed_info *feed_info);
 
 // maybe change the function signature so you can actually do error handling with the result?
 time_t pubDate_to_time_t(char *s);
 
 // returns a string about the result of a feed_info function
 const char *zblock_feed_info_strerror(zblock_feed_info_err error);
+
+// Begin retrieval of feed info objects.
+zblock_feed_info_err zblock_feed_info_retrieve_list_begin(PGconn *conn);
+
+// Retrieve the next feed list object.
+// On error, no more objects can be retrieved and the returned object is invalid.
+zblock_feed_info_err zblock_feed_info_retrieve_list_item(PGconn *conn, zblock_feed_info_minimal *feed_info);
 
 // check if the feed currently exists. the result is in the exists pointer.
 zblock_feed_info_err zblock_feed_info_exists(PGconn *conn, const char *url, u64snowflake channel_id, int *exists);

@@ -23,9 +23,23 @@ static const char *ZBLOCK_FEED_INFO_ERRORS[] = {
 	"Invalid arguments provided",
 	"An error was encountered with the feed database",
 	"The feed already exists",
-	"The feed does not exist"
+	"The feed does not exist",
+	"Finished getting feed info",
+	"Out of memory"
 };
 static_assert(sizeof(ZBLOCK_FEED_INFO_ERRORS) / sizeof(*ZBLOCK_FEED_INFO_ERRORS) == ZBLOCK_FEED_INFO_ERRORCOUNT, "Not all feed info errors implemented");
+
+// free all information associated with a minimal feed info struct (does not assume the struct was allocated using malloc)
+void zblock_feed_info_minimal_free(zblock_feed_info_minimal *feed_info) {
+	free(feed_info->last_pubDate);
+	free(feed_info->url);
+}
+
+// free all information associated with a feed info struct (does not assume the struct was allocated using malloc)
+void zblock_feed_info_free(zblock_feed_info *feed_info) {
+	free(feed_info->title);
+	zblock_feed_info_minimal_free((zblock_feed_info_minimal *) feed_info);
+}
 
 // returns a string about the result of a feed_info function
 const char *zblock_feed_info_strerror(zblock_feed_info_err error) {
@@ -41,6 +55,49 @@ time_t pubDate_to_time_t(char *s) {
 	}
 	
 	return timegm(&tm);
+}
+
+// Begin retrieval of feed info objects.
+zblock_feed_info_err zblock_feed_info_retrieve_list_begin(PGconn *conn) {
+	if (!conn) return ZBLOCK_FEED_INFO_INVALID_ARGS;
+
+	if (!PQsendQueryParams(
+		conn, "SELECT url, last_pubDate, channel_id from feeds",
+		0, NULL, NULL, NULL, NULL, 1
+	)) {
+		return ZBLOCK_FEED_INFO_DBERROR;
+	}
+	PQsetSingleRowMode(conn);
+	return ZBLOCK_FEED_INFO_OK;
+}
+
+// Retrieve the next feed list object.
+// On error, no more objects can be retrieved and the returned object is invalid.
+zblock_feed_info_err zblock_feed_info_retrieve_list_item(PGconn *conn, zblock_feed_info_minimal *feed_info) {
+	if (!conn || !feed_info) return ZBLOCK_FEED_INFO_INVALID_ARGS;
+
+	PGresult *res = PQgetResult(conn);
+	if (PQresultStatus(res) != PGRES_SINGLE_TUPLE) {
+		if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+			log_error("Unable to retrieve feeds: %s", PQresultErrorMessage(res));	
+			PQclear(res);
+			return ZBLOCK_FEED_INFO_DBERROR;		
+		} else {
+			PQclear(res);
+			return ZBLOCK_FEED_INFO_FINISHED;		
+		}
+	}
+
+	feed_info->url = strdup(PQgetvalue(res, 0, 0));
+	feed_info->last_pubDate = strdup(PQgetvalue(res, 0, 1));
+	if (!feed_info->url || !feed_info->last_pubDate) {
+		PQclear(res);
+		return ZBLOCK_FEED_INFO_NOMEM;
+	}
+	feed_info->channel_id = be64toh(*(uint64_t *) PQgetvalue(res, 0, 2));
+	
+	PQclear(res);
+	return ZBLOCK_FEED_INFO_OK;
 }
 
 // check if the feed currently exists. the result is in the exists pointer.
@@ -149,11 +206,7 @@ zblock_feed_info_err zblock_feed_info_update(PGconn *conn, zblock_feed_info_mini
 	);
 	
 	zblock_feed_info_err result = ZBLOCK_FEED_INFO_OK;
-	if (PQresultStatus(update_res) != PGRES_COMMAND_OK) {
-		log_error("Failed to update feed: %s", PQresultErrorMessage(update_res));
-		result = ZBLOCK_FEED_INFO_DBERROR;
-	}
-	
+	if (PQresultStatus(update_res) != PGRES_COMMAND_OK) result = ZBLOCK_FEED_INFO_DBERROR;
 	PQclear(update_res);
 	return result;
 }
