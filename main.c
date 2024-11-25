@@ -37,6 +37,9 @@ struct bot_command {
 #define _CREATE_EMBEDS(embeds) &(struct discord_embeds) { .size = sizeof((struct discord_embed[]) embeds) / sizeof(struct discord_embed), .array = (struct discord_embed[]) embeds }
 #define CREATE_EMBEDS(...) _CREATE_EMBEDS(P99_PROTECT(__VA_ARGS__))
 
+#define _CREATE_COMPONENTS(components) &(struct discord_components) { .size = sizeof((struct discord_component[]) components) / sizeof(struct discord_component), .array = (struct discord_component[]) components }
+#define CREATE_COMPONENTS(...) _CREATE_COMPONENTS(P99_PROTECT(__VA_ARGS__))
+
 #define BOT_COMMAND_NOT_IMPLEMENTED() do { \
 	struct discord_interaction_response res = { \
 		.type = DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE, \
@@ -264,6 +267,33 @@ static void bot_command_list(struct discord *client, const struct discord_intera
 	struct discord_interaction_response res = {
 		.type = DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE,
 		.data = &(struct discord_interaction_callback_data) {
+			.components = CREATE_COMPONENTS({
+				{				
+					.type = DISCORD_COMPONENT_ACTION_ROW,
+					.components = CREATE_COMPONENTS({
+						{
+							.type = DISCORD_COMPONENT_BUTTON,
+							.disabled = false,
+							.style = DISCORD_BUTTON_SECONDARY,
+							.custom_id = "page_back",
+							.label = "Back",
+							.emoji = &(struct discord_emoji) {
+								.name = "◀️"
+							}
+						},
+						{
+							.type = DISCORD_COMPONENT_BUTTON,
+							.disabled = false,
+							.style = DISCORD_BUTTON_SECONDARY,
+							.custom_id = "page_next",
+							.label = "Next",
+							.emoji = &(struct discord_emoji) {
+								.name = "▶️"
+							}
+						}
+					})
+				}
+			}),
 			.embeds = CREATE_EMBEDS({
 				{
 					.title = "Feed List",
@@ -360,25 +390,31 @@ static void on_ready(struct discord *client, const struct discord_ready *event) 
 }
 
 static void on_interaction(struct discord *client, const struct discord_interaction *event) {
-	if (event->type != DISCORD_INTERACTION_APPLICATION_COMMAND)
-		return; // not a slash command
+	switch (event->type) {
+		case DISCORD_INTERACTION_APPLICATION_COMMAND: {
+			// invoke the command
+			for (struct bot_command *i = commands; i < commands + sizeof(commands) / sizeof(*commands); ++i) {
+				if (!strcmp(event->data->name, i->cmd.name)) {
+					i->func(client, event);
+					return;
+				}
+			}
 
-	// invoke the command
-	for (struct bot_command *i = commands; i < commands + sizeof(commands) / sizeof(*commands); ++i) {
-		if (!strcmp(event->data->name, i->cmd.name)) {
-			i->func(client, event);
-			return;
-		}
+			// not a real command
+			struct discord_interaction_response res = {
+				.type = DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE,
+				.data = &(struct discord_interaction_callback_data) {
+					.content = "Invalid command, contact the maintainer of this bot."
+				}
+			};
+			discord_create_interaction_response(client, event->id, event->token, &res, NULL);		
+		} break;
+		case DISCORD_INTERACTION_MESSAGE_COMPONENT: {
+			// nothing yet
+		} break;
+		default: // nothing
 	}
 
-	// not a real command
-	struct discord_interaction_response res = {
-		.type = DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE,
-		.data = &(struct discord_interaction_callback_data) {
-			.content = "Invalid command, contact the maintainer of this bot."
-		}
-	};
-	discord_create_interaction_response(client, event->id, event->token, &res, NULL);
 }
 
 // delay before the first feed retrieval (in ms)
