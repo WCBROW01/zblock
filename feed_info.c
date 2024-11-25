@@ -47,11 +47,14 @@ time_t pubDate_to_time_t(char *s) {
 zblock_feed_info_err zblock_feed_info_exists(PGconn *conn, const char *url, u64snowflake channel_id, int *exists) {
 	if (!conn || !exists) return ZBLOCK_FEED_INFO_INVALID_ARGS;
 	
-	char channel_id_str[21]; // hold a 64-bit int in decimal form
-	snprintf(channel_id_str, sizeof(channel_id_str), "%" PRId64, channel_id);
-	
-	const char *const params[] = {url, channel_id_str};
-	PGresult *res = PQexecParams(conn, "SELECT COUNT(1) FROM feeds WHERE url = $1 AND channel_id = $2", 2, NULL, params, NULL, NULL, 1);
+	uint64_t channel_id_be = htobe64(channel_id);
+	const char *const params[] = {url, (char *) channel_id_be};
+	const int param_lengths[] = {0, sizeof(channel_id_be)};
+	const int param_formats[] = {0, 1};
+	PGresult *res = PQexecParams(conn,
+		"SELECT COUNT(1) FROM feeds WHERE url = $1 AND channel_id = $2::bigint",
+		2, NULL, params, param_lengths, param_formats, 1
+	);
 	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
 		log_error(PQresultErrorMessage(res));
 		PQclear(res);
@@ -78,15 +81,14 @@ zblock_feed_info_err zblock_feed_info_insert(PGconn *conn, zblock_feed_info *fee
 		}	
 	}
 
-	// I don't want to deal with the extra fuss that is sending these in binary format
-	char channel_id_str[21];
-	snprintf(channel_id_str, sizeof(channel_id_str), "%" PRId64, feed->channel_id);
-	char guild_id_str[21];
-	snprintf(guild_id_str, sizeof(guild_id_str), "%" PRId64, feed->guild_id);
-	const char *const insert_params[] = {feed->url, feed->last_pubDate, channel_id_str, feed->title, guild_id_str};
+	uint64_t channel_id_be = htobe64(feed->channel_id);
+	uint64_t guild_id_be = htobe64(feed->guild_id);
+	const char *const insert_params[] = {feed->url, feed->last_pubDate, (char *) channel_id_be, feed->title, (char *) guild_id_be};
+	const int param_lengths[] = {0, 0, sizeof(channel_id_be), 0, sizeof(guild_id_be)};
+	const int param_formats[] = {0, 0, 1, 0, 1};
 	PGresult *insert_res = PQexecParams(conn,
-		"INSERT INTO feeds (url, last_pubDate, channel_id, title, guild_id) VALUES ($1, $2, $3, $4, $5)",
-		5, NULL, insert_params, NULL, NULL, 0
+		"INSERT INTO feeds (url, last_pubDate, channel_id, title, guild_id) VALUES ($1, $2, $3::bigint, $4, $5::bigint)",
+		5, NULL, insert_params, param_lengths, param_formats, 1
 	);
 	
 	zblock_feed_info_err result = ZBLOCK_FEED_INFO_OK;
@@ -114,13 +116,13 @@ zblock_feed_info_err zblock_feed_info_delete(PGconn *conn, const char *url, u64s
 		}
 	}
 	
-	// I don't want to deal with the extra fuss that is sending these in binary format
-	char channel_id_str[21];
-	snprintf(channel_id_str, sizeof(channel_id_str), "%" PRId64, channel_id);
-	const char *const params[] = {url, channel_id_str};
+	uint64_t channel_id_be = htobe64(channel_id);
+	const char *const params[] = {url, (char *) channel_id_be};
+	const int param_lengths[] = {0, sizeof(channel_id_be)};
+	const int param_formats[] = {0, 1};
 	PGresult *res = PQexecParams(conn,
-		"DELETE FROM feeds WHERE url = $1 AND channel_id = $2",
-		2, NULL, params, NULL, NULL, 0
+		"DELETE FROM feeds WHERE url = $1 AND channel_id = $2::bigint",
+		2, NULL, params, param_lengths, param_formats, 1
 	);
 	
 	zblock_feed_info_err result = ZBLOCK_FEED_INFO_OK;
@@ -136,15 +138,14 @@ zblock_feed_info_err zblock_feed_info_delete(PGconn *conn, const char *url, u64s
 // updates the last_pubDate field of a given feed in the database
 zblock_feed_info_err zblock_feed_info_update(PGconn *conn, zblock_feed_info_minimal *feed) {
 	if (!conn || !feed) return ZBLOCK_FEED_INFO_INVALID_ARGS;
-
-	char channel_id_str[21]; // hold a 64-bit int in decimal form
-	snprintf(channel_id_str, sizeof(channel_id_str), "%" PRId64, feed->channel_id);
 	
-	const char *const update_params[] = {feed->last_pubDate, feed->url, channel_id_str};
-	// save the updated pubDate to disk once that's implemented
+	uint64_t channel_id_be = htobe64(feed->channel_id);
+	const char *const update_params[] = {feed->last_pubDate, feed->url, (char *) channel_id_be};
+	const int param_lengths[] = {0, 0, sizeof(channel_id_be)};
+	const int param_formats[] = {0, 0, 1};
 	PGresult *update_res = PQexecParams(conn,
-		"UPDATE feeds SET last_pubDate = $1 WHERE url = $2 AND channel_id = $3",
-		3, NULL, update_params, NULL, NULL, 0
+		"UPDATE feeds SET last_pubDate = $1 WHERE url = $2 AND channel_id = $3::bigint",
+		3, NULL, update_params, param_lengths, param_formats, 1
 	);
 	
 	zblock_feed_info_err result = ZBLOCK_FEED_INFO_OK;
