@@ -513,6 +513,13 @@ static void on_interaction(struct discord *client, const struct discord_interact
 
 }
 
+static void on_guild_delete(struct discord *client, const struct discord_guild *event) {
+	(void) client;
+	if (zblock_feed_info_delete_all_guild(database_conn, event->id)) {
+		log_error("Unable to delete all feeds from guild %" PRIu64 ". You probably want to clean this up.", event->id);
+	}
+}
+
 // delay before the first feed retrieval (in ms)
 #define FEED_TIMER_DELAY 15000
 
@@ -538,6 +545,7 @@ int main(void) {
 	
 	discord_set_on_ready(client, &on_ready);
 	discord_set_on_interaction_create(client, &on_interaction);
+	discord_set_on_guild_delete(client, &on_guild_delete);
 	discord_timer_interval(client, timer_retrieve_feeds, NULL, NULL, FEED_TIMER_DELAY, FEED_TIMER_INTERVAL, -1);
 	discord_run(client);
 	
