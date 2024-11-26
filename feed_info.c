@@ -219,7 +219,7 @@ zblock_feed_info_err zblock_feed_info_count_channel(PGconn *conn, u64snowflake c
 	if (!conn || !count) return ZBLOCK_FEED_INFO_INVALID_ARGS;
 
 	uint64_t channel_id_be = htobe64(channel_id);
-	const char *const params[] = {(char *) channel_id_be};
+	const char *const params[] = {(char *) &channel_id_be};
 	const int param_lengths[] = {sizeof(channel_id_be)};
 	const int param_formats[] = {1};
 	PGresult *res = PQexecParams(conn,
@@ -234,6 +234,49 @@ zblock_feed_info_err zblock_feed_info_count_channel(PGconn *conn, u64snowflake c
 	}
 	
 	*count = be64toh(*(uint64_t *) PQgetvalue(res, 0, 0));
+	PQclear(res);
+	return ZBLOCK_FEED_INFO_OK;
+}
+
+// returns a chunk of feeds for the given channel in the array provided by chunk.
+// assumes chunk was preallocated with the number of elements in size
+// num_retrieved is an optional parameter that will contain the number of feeds actually retrieved (in case it is less)
+zblock_feed_info_err zblock_feed_info_retrieve_chunk_channel(PGconn *conn, u64snowflake channel_id, uint64_t offset, size_t size, zblock_feed_info *chunk, int *num_retrieved) {
+	if (!conn || !chunk) return ZBLOCK_FEED_INFO_INVALID_ARGS;
+	
+	uint64_t channel_id_be = htobe64(channel_id);
+	uint64_t offset_be = htobe64(offset);
+	uint64_t size_be = htobe64(size);
+	
+	const char *const params[] = {(char *) &channel_id_be, (char *) &offset_be, (char *) &size_be};
+	const int param_lengths[] = {sizeof(channel_id_be), sizeof(offset_be), sizeof(size_be)};
+	const int param_formats[] = {1, 1, 1};
+	PGresult *res = PQexecParams(conn,
+		"SELECT url, last_pubDate, channel_id, title, guild_id FROM feeds WHERE channel_id = $1::bigint OFFSET $2::bigint LIMIT $3::bigint",
+		3, NULL, params, param_lengths, param_formats, 1
+	);
+	
+	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+		log_error(PQresultErrorMessage(res));
+		PQclear(res);
+		return ZBLOCK_FEED_INFO_DBERROR;
+	}
+	
+	int nfeeds = PQntuples(res);
+	if (num_retrieved) *num_retrieved = nfeeds;
+	for (int i = 0; i < nfeeds; ++i) {
+		chunk[i].url = strdup(PQgetvalue(res, i, 0));
+		chunk[i].last_pubDate = strdup(PQgetvalue(res, i, 1));
+		chunk[i].channel_id = be64toh(*(uint64_t *) PQgetvalue(res, i, 2));
+		chunk[i].title = strdup(PQgetvalue(res, i, 3));
+		chunk[i].guild_id = be64toh(*(uint64_t *) PQgetvalue(res, i, 4));
+		
+		if (!chunk[i].url || !chunk[i].last_pubDate || !chunk[i].title) {
+			PQclear(res);
+			return ZBLOCK_FEED_INFO_NOMEM;
+		}
+	}
+	
 	PQclear(res);
 	return ZBLOCK_FEED_INFO_OK;
 }

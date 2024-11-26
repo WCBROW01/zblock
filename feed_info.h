@@ -66,4 +66,9 @@ zblock_feed_info_err zblock_feed_info_update(PGconn *conn, zblock_feed_info_mini
 // returns the number of feeds in a channel in count
 zblock_feed_info_err zblock_feed_info_count_channel(PGconn *conn, u64snowflake channel_id, int64_t *count);
 
+// returns a chunk of feeds for the given channel in the array provided by chunk.
+// assumes chunk was preallocated with the number of elements in size
+// num_retrieved is an optional parameter that will contain the number of feeds actually retrieved (in case it is less)
+zblock_feed_info_err zblock_feed_info_retrieve_chunk_channel(PGconn *conn, u64snowflake channel_id, uint64_t offset, size_t size, zblock_feed_info *chunk, int *num_retrieved);
+
 #endif
