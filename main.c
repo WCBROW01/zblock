@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -19,6 +20,7 @@
 
 #include "config.h"
 #include "feed_info.h"
+#include "arena.h"
 
 // Function pointer type for commands
 typedef void (*command_func)(struct discord *, const struct discord_interaction *);
@@ -263,48 +265,142 @@ static void bot_command_remove(struct discord *client, const struct discord_inte
 	discord_create_interaction_response(client, event->id, event->token, &res, NULL);
 }
 
+#define LIST_PAGE_SIZE 5
+
+// The arena everything gets allocated to will be returned in the arena pointer
+static struct discord_interaction_callback_data *list_data_create(u64snowflake channel_id, int page_number, Arena **arena) {
+	assert(arena && "No arena provided"); // this is programmer error
+	// clamp page number
+	page_number = page_number < 1 ? 1 : page_number;
+	
+	*arena = Arena_new(8192); // this should be more than enough
+	struct discord_interaction_callback_data *data = Arena_allocz(*arena, sizeof(*data));
+	
+	int64_t count;
+	zblock_feed_info_err error = zblock_feed_info_count_channel(database_conn, channel_id, &count);
+	if (error) {
+		char *msg = Arena_alloc(*arena, sizeof(DISCORD_MAX_MESSAGE_LEN));
+		snprintf(msg, DISCORD_MAX_MESSAGE_LEN, "Error creating list: %s", zblock_feed_info_strerror(error));
+		data->content = msg;
+		return data;
+	}
+	
+	int last_page_number = count ? count % LIST_PAGE_SIZE ? count / LIST_PAGE_SIZE + 1 : count / LIST_PAGE_SIZE : 1;
+	
+	zblock_feed_info feeds[LIST_PAGE_SIZE];
+	int num_retrieved;
+	error = zblock_feed_info_retrieve_chunk_channel(database_conn, channel_id, (page_number - 1) * LIST_PAGE_SIZE, LIST_PAGE_SIZE, feeds, &num_retrieved);
+	if (error) {
+		char *msg = Arena_alloc(*arena, sizeof(DISCORD_MAX_MESSAGE_LEN));
+		snprintf(msg, DISCORD_MAX_MESSAGE_LEN, "Error creating list: %s", zblock_feed_info_strerror(error));
+		data->content = msg;
+		return data;
+	}
+	
+	// create our components starting with the action row
+	data->components = Arena_alloc(*arena, sizeof(*data->components));
+	data->components->size = 1;
+	data->components->array = Arena_allocz(*arena, data->components->size * sizeof(*data->components->array));
+	struct discord_component *action_row = data->components->array;
+	action_row->type = DISCORD_COMPONENT_ACTION_ROW;
+	// create buttons
+	action_row->components = Arena_alloc(*arena, sizeof(*action_row->components));
+	action_row->components->size = 2;
+	action_row->components->array = Arena_allocz(*arena, action_row->components->size * sizeof(*action_row->components->array));
+	struct discord_component *buttons = action_row->components->array;
+	// create emojis
+	struct discord_emoji *back_arrow = Arena_allocz(*arena, sizeof(*back_arrow));
+	back_arrow->name = "◀️";
+	struct discord_emoji *next_arrow = Arena_allocz(*arena, sizeof(*next_arrow));
+	next_arrow->name = "▶️";
+	// create button ids
+	int back_id_size = snprintf(NULL, 0, "list_page%d", page_number - 1) + 1;
+	char *back_id = Arena_alloc(*arena, back_id_size);
+	snprintf(back_id, back_id_size, "list_page%d", page_number - 1);
+	int next_id_size = snprintf(NULL, 0, "list_page%d", page_number + 1) + 1;
+	char *next_id = Arena_alloc(*arena, next_id_size);
+	snprintf(next_id, next_id_size, "list_page%d", page_number + 1);
+	// populate buttons
+	buttons[0] = (struct discord_component) {
+		.type = DISCORD_COMPONENT_BUTTON,
+		.disabled = page_number == 1,
+		.style = DISCORD_BUTTON_SECONDARY,
+		.custom_id = back_id,
+		.label = "Back",
+		.emoji = back_arrow
+	};
+	buttons[1] = (struct discord_component) {
+		.type = DISCORD_COMPONENT_BUTTON,
+		.disabled = page_number == last_page_number,
+		.style = DISCORD_BUTTON_SECONDARY,
+		.custom_id = next_id,
+		.label = "Next",
+		.emoji = next_arrow
+	};
+	
+	// create embed
+	data->embeds = Arena_alloc(*arena, sizeof(*data->embeds));
+	data->embeds->size = 1;
+	data->embeds->array = Arena_allocz(*arena, data->embeds->size * sizeof(*data->embeds->array));
+	struct discord_embed *embed = data->embeds->array;
+	int embed_title_size = snprintf(NULL, 0, "Feed List (Page %d of %d)", page_number, last_page_number) + 1;
+	char *embed_title = Arena_alloc(*arena, embed_title_size);
+	snprintf(embed_title, embed_title_size, "Feed List (Page %d of %d)", page_number, last_page_number);
+	
+	// write the description
+	char *embed_description;
+	if (count) {
+		embed_description = Arena_alloc(*arena, 4096); // the current max size of embed descriptions
+		int embed_description_size = 0;
+		for (int i = 0; i < num_retrieved; ++i) {
+			// in case somebody has maliciously long text in their feed
+			if (embed_description_size < 4096) {
+				embed_description_size += snprintf(embed_description + embed_description_size, 4096 - embed_description_size,
+					"### %d. %s\n" // feed title
+					"Link: %s\n" // feed url
+					"Last updated: %s\n", // last_pubDate
+					(page_number - 1) * LIST_PAGE_SIZE + i + 1, feeds[i].title,
+					feeds[i].url,
+					feeds[i].last_pubDate
+				);
+			}
+		}
+	} else {
+		embed_description = "There are no feeds in this channel.";
+	}
+	
+	*embed = (struct discord_embed) {
+		.title = embed_title,
+		.type = "rich",
+		.description = embed_description
+	};
+	
+	return data;
+}
+
 static void bot_command_list(struct discord *client, const struct discord_interaction *event) {
+	Arena *arena;
 	struct discord_interaction_response res = {
 		.type = DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE,
-		.data = &(struct discord_interaction_callback_data) {
-			.components = CREATE_COMPONENTS({
-				{				
-					.type = DISCORD_COMPONENT_ACTION_ROW,
-					.components = CREATE_COMPONENTS({
-						{
-							.type = DISCORD_COMPONENT_BUTTON,
-							.disabled = false,
-							.style = DISCORD_BUTTON_SECONDARY,
-							.custom_id = "page_back",
-							.label = "Back",
-							.emoji = &(struct discord_emoji) {
-								.name = "◀️"
-							}
-						},
-						{
-							.type = DISCORD_COMPONENT_BUTTON,
-							.disabled = false,
-							.style = DISCORD_BUTTON_SECONDARY,
-							.custom_id = "page_next",
-							.label = "Next",
-							.emoji = &(struct discord_emoji) {
-								.name = "▶️"
-							}
-						}
-					})
-				}
-			}),
-			.embeds = CREATE_EMBEDS({
-				{
-					.title = "Feed List",
-					.type = "rich",
-					.description = "List functionality has not been fully implemented yet."
-				}
-			})
-		}
+		.data = list_data_create(event->channel_id, 1, &arena)
 	};
 
 	discord_create_interaction_response(client, event->id, event->token, &res, NULL);
+	Arena_delete(arena);
+}
+
+static void list_update(struct discord *client, const struct discord_interaction *event) {
+	int page_number;
+	sscanf(event->data->custom_id, "list_page%d", &page_number);
+
+	Arena *arena;
+	struct discord_interaction_response res = {
+		.type = DISCORD_INTERACTION_UPDATE_MESSAGE,
+		.data = list_data_create(event->channel_id, page_number, &arena)
+	};
+
+	discord_create_interaction_response(client, event->id, event->token, &res, NULL);
+	Arena_delete(arena);
 }
 
 static void bot_command_help(struct discord *client, const struct discord_interaction *event) {
@@ -409,8 +505,8 @@ static void on_interaction(struct discord *client, const struct discord_interact
 			};
 			discord_create_interaction_response(client, event->id, event->token, &res, NULL);		
 		} break;
-		case DISCORD_INTERACTION_MESSAGE_COMPONENT: {
-			// nothing yet
+		case DISCORD_INTERACTION_MESSAGE_COMPONENT: { // only the list command is used here so far
+			list_update(client, event);
 		} break;
 		default: // nothing
 	}
