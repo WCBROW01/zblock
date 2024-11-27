@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <locale.h>
 #include <time.h>
+#include <pthread.h>
 
 #include <curl/curl.h>
 
@@ -63,23 +64,29 @@ typedef struct {
 static PGconn *database_conn;
 
 // this does not account for large-scale usage yet.
-static void timer_retrieve_feeds(struct discord *client, struct discord_timer *timer) {
-	// not doing anything with the timer yet
-	(void) timer;
+static void *thread_retrieve_feeds(void *arg) {
+	struct discord *client = arg;
 
 	// all of this is as asynchronous as I can reasonably make it
 	CURLM *multi = curl_multi_init();
 	if (!multi) {
 		// oh no
 		log_error("Unable to retrieve feed list: NULL pointer from curl_multi_init()");
-		return;
+		return NULL;
 	}
-
+	
+	PGconn *database_conn = PQconnectdb(zblock_config.conninfo); // yes i know this name is reused
+	if (!database_conn) {
+		log_error("Failed to connect to database.");
+		curl_multi_cleanup(multi);
+		return NULL;
+	}
+	
 	// Begin retrieval of feed list objects.
 	if (zblock_feed_info_retrieve_list_begin(database_conn)) {
 		log_error("Unable to retrieve feed list: %s", PQerrorMessage(database_conn));
 		curl_multi_cleanup(multi);
-		return;
+		return NULL;
 	}
 	
 	// put running handles up here so we can start transfers now instead of later
@@ -199,7 +206,17 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 	
 	// processing is done
 	curl_multi_cleanup(multi);
+	PQfinish(database_conn);
 	log_info("Retrieved %d of %d feeds!", successful_feeds, total_feeds);
+	return NULL;
+}
+
+static void timer_retrieve_feeds(struct discord *client, struct discord_timer *timer) {
+	// not doing anything with the timer
+	(void) timer;
+	
+	pthread_t retrieve_thread;
+	pthread_create(&retrieve_thread, NULL, &thread_retrieve_feeds, client);
 }
 
 static void bot_command_add(struct discord *client, const struct discord_interaction *event) {
