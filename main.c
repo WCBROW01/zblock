@@ -225,6 +225,19 @@ static void bot_command_add(struct discord *client, const struct discord_interac
 	feed.url = event->data->options->array[0].value;
 	feed.channel_id = event->channel_id;
 	feed.guild_id = event->guild_id;
+
+	// check if the feed already exists
+	{
+		int feed_exists;
+		zblock_feed_info_err exists_error = zblock_feed_info_exists(database_conn, feed.url, feed.channel_id, &feed_exists);
+		if (exists_error) {
+			snprintf(msg, sizeof(msg), "Error adding feed: %s", zblock_feed_info_strerror(exists_error));
+			goto send_msg;
+		} else if (feed_exists) {
+			snprintf(msg, sizeof(msg), "Error adding feed: It has already been added to this channel");
+			goto send_msg;
+		}
+	}
 	
 	mrss_t *mrss_feed;
 	mrss_error_t mrss_error = mrss_parse_url(feed.url, &mrss_feed);

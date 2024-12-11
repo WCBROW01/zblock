@@ -126,20 +126,9 @@ zblock_feed_info_err zblock_feed_info_exists(PGconn *conn, const char *url, u64s
 	return ZBLOCK_FEED_INFO_OK;
 }
 
-// Insert new feed into the database
+// Insert new feed into the database. This function assumes that you have already verified that it has not been added previously.
 zblock_feed_info_err zblock_feed_info_insert(PGconn *conn, zblock_feed_info *feed) {
 	if (!conn || !feed) return ZBLOCK_FEED_INFO_INVALID_ARGS;
-
-	// check if the feed already exists
-	{
-		int feed_exists;
-		zblock_feed_info_err exists_error = zblock_feed_info_exists(conn, feed->url, feed->channel_id, &feed_exists);
-		if (exists_error) {
-			return exists_error;
-		} else if (feed_exists) {
-			return ZBLOCK_FEED_INFO_EXISTS;
-		}	
-	}
 
 	uint64_t channel_id_be = htobe64(feed->channel_id);
 	uint64_t guild_id_be = htobe64(feed->guild_id);

@@ -54,7 +54,7 @@ zblock_feed_info_err zblock_feed_info_retrieve_list_item(PGconn *conn, zblock_fe
 // check if the feed currently exists. the result is in the exists pointer.
 zblock_feed_info_err zblock_feed_info_exists(PGconn *conn, const char *url, u64snowflake channel_id, int *exists);
 
-// Insert new feed into the database
+// Insert new feed into the database. This function assumes that you have already verified that it has not been added previously.
 zblock_feed_info_err zblock_feed_info_insert(PGconn *conn, zblock_feed_info *feed);
 
 // deletes feed from the database
