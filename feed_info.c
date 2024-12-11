@@ -81,12 +81,12 @@ zblock_feed_info_err zblock_feed_info_retrieve_list_item(PGconn *conn, zblock_fe
 		if (PQresultStatus(res) != PGRES_TUPLES_OK) {
 			log_error("Unable to retrieve feeds: %s", PQresultErrorMessage(res));	
 			PQclear(res);
-			PQgetResult(conn);
+			PQgetResult(conn); // thrown out because it should be null
 			return ZBLOCK_FEED_INFO_DBERROR;		
 		} else {
 			PQclear(res);
 			// we need to do this one last time or the next query won't work
-			PQgetResult(conn);
+			PQgetResult(conn); // thrown out because it should be null
 			return ZBLOCK_FEED_INFO_FINISHED;		
 		}
 	}
