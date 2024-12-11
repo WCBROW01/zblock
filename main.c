@@ -188,8 +188,7 @@ static void *thread_retrieve_feeds(void *arg) {
 				curl_multi_remove_handle(multi, handle);
 				curl_easy_cleanup(handle);
 				free(feed_buffer->buf);
-				free(feed_buffer->info.last_pubDate);
-				free(feed_buffer->info.url);
+				zblock_feed_info_minimal_free(&feed_buffer->info);
 				free(feed_buffer);
 			}
 		} while (msg);
