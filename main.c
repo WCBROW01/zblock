@@ -218,6 +218,17 @@ static void timer_retrieve_feeds(struct discord *client, struct discord_timer *t
 	pthread_create(&retrieve_thread, NULL, &thread_retrieve_feeds, client);
 }
 
+static void timer_tuesday_event(struct discord *client, struct discord_timer *timer) {
+	// not doing anything with the timer
+	(void) timer;
+
+	struct discord_create_message msg = {
+		.content = "https://tenor.com/view/happy-tuesday-its-tuesday-tuesday-dance-default-mario-gif-15064439"
+	};
+
+	discord_create_message(client, zblock_config.tuesday_channel, &msg, NULL);
+}
+
 static void bot_command_add(struct discord *client, const struct discord_interaction *event) {
 	char msg[DISCORD_MAX_MESSAGE_LEN];
 	zblock_feed_info feed;
@@ -505,12 +516,43 @@ static struct bot_command commands[] = {
 	}
 };
 
+// delay before the first feed retrieval (in ms)
+#define FEED_TIMER_DELAY 15000
+
+// interval for the feed retrieval timer (in ms)
+#define FEED_TIMER_INTERVAL 600000
+
+// seconds in a day
+#define ONE_DAY_SEC 86400
+
+// milliseconds in a week
+#define ONE_WEEK_MS 604800000
+
 static void on_ready(struct discord *client, const struct discord_ready *event) {
 	log_info("Logged in as %s!", event->user->username);
 
 	// create commands
 	for (struct bot_command *i = commands; i < commands + sizeof(commands) / sizeof(*commands); ++i) {
 		discord_create_global_application_command(client, event->application->id, &i->cmd, NULL);
+	}
+
+	// feed timer
+	discord_timer_interval(client, timer_retrieve_feeds, NULL, NULL, FEED_TIMER_DELAY, FEED_TIMER_INTERVAL, -1);
+
+	// find the next tueday and start the timer for the tuesday event
+	if (zblock_config.tuesday_enable) {
+		time_t current_time = time(NULL);
+		struct tm midnight_tm;
+		gmtime_r(&current_time, &midnight_tm);
+		// set it to midnight
+		midnight_tm.tm_sec = 0;
+		midnight_tm.tm_min = 0;
+		midnight_tm.tm_hour = 0;
+		time_t midnight_time = timegm(&midnight_tm);
+		// find next tuesday and add it to the time
+		time_t next_tuesday = midnight_time + ONE_DAY_SEC * (((1 - midnight_tm.tm_wday + 7) % 7) + 1);
+		// set a timer that starts midnight next tuesday and triggers every week
+		discord_timer_interval(client, timer_tuesday_event, NULL, NULL, (next_tuesday - current_time) * 1000, ONE_WEEK_MS, -1);
 	}
 }
 
@@ -549,12 +591,6 @@ static void on_guild_delete(struct discord *client, const struct discord_guild *
 	}
 }
 
-// delay before the first feed retrieval (in ms)
-#define FEED_TIMER_DELAY 15000
-
-// interval for the feed retrieval timer (in ms)
-#define FEED_TIMER_INTERVAL 600000
-
 int main(void) {
 	int exit_code = 0;	
 	
@@ -562,7 +598,13 @@ int main(void) {
 	setlocale(LC_ALL, "C");
 	srand(time(NULL));
 	struct discord *client = discord_config_init("config.json");
-	zblock_config_load(client);
+
+	zblock_config_err config_err = zblock_config_load(client);
+	if (config_err) {
+		log_fatal("Error loading zblock config: %s\n", zblock_config_strerror(config_err));
+		exit_code = 1;
+		goto cleanup;
+	}
 	
 	// connect to database
 	database_conn = PQconnectdb(zblock_config.conninfo);
@@ -575,7 +617,6 @@ int main(void) {
 	discord_set_on_ready(client, &on_ready);
 	discord_set_on_interaction_create(client, &on_interaction);
 	discord_set_on_guild_delete(client, &on_guild_delete);
-	discord_timer_interval(client, timer_retrieve_feeds, NULL, NULL, FEED_TIMER_DELAY, FEED_TIMER_INTERVAL, -1);
 	discord_run(client);
 	
 	PQfinish(database_conn);
