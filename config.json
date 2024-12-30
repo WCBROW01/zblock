@@ -19,6 +19,10 @@
     }
   },
   "zblock": {
-    "conninfo": "YOUR-DB-CONNINFO"
+    "conninfo": "YOUR-DB-CONNINFO",
+    "tuesday": {
+      "enable": false,
+      "channel": "YOUR-CHANNEL-ID"
+    }
   }
 }
