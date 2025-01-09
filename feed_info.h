@@ -63,6 +63,9 @@ zblock_feed_info_err zblock_feed_info_delete(PGconn *conn, const char *url, u64s
 // deletes all feeds associated with a guild from the database
 zblock_feed_info_err zblock_feed_info_delete_all_guild(PGconn *conn, u64snowflake guild_id);
 
+// deletes all feeds associated with a channel from the database
+zblock_feed_info_err zblock_feed_info_delete_all_channel(PGconn *conn, u64snowflake channel_id);
+
 // updates the last_pubDate field of a given feed in the database
 zblock_feed_info_err zblock_feed_info_update(PGconn *conn, zblock_feed_info_minimal *feed);
 

@@ -207,6 +207,29 @@ zblock_feed_info_err zblock_feed_info_delete_all_guild(PGconn *conn, u64snowflak
 	return result;
 }
 
+// deletes all feeds associated with a channel from the database
+zblock_feed_info_err zblock_feed_info_delete_all_channel(PGconn *conn, u64snowflake channel_id) {
+	if (!conn) return ZBLOCK_FEED_INFO_INVALID_ARGS;
+
+	uint64_t channel_id_be = htobe64(channel_id);
+	const char *const params[] = {(char *) &channel_id_be};
+	const int param_lengths[] = {sizeof(channel_id_be)};
+	const int param_formats[] = {1};
+	PGresult *res = PQexecParams(conn,
+		"DELETE FROM feeds WHERE channel_id = $1::bigint",
+		1, NULL, params, param_lengths, param_formats, 1
+	);
+
+	zblock_feed_info_err result = ZBLOCK_FEED_INFO_OK;
+	if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+		log_error(PQresultErrorMessage(res));
+		result = ZBLOCK_FEED_INFO_DBERROR;
+	}
+
+	PQclear(res);
+	return result;
+}
+
 // updates the last_pubDate field of a given feed in the database
 zblock_feed_info_err zblock_feed_info_update(PGconn *conn, zblock_feed_info_minimal *feed) {
 	if (!conn || !feed) return ZBLOCK_FEED_INFO_INVALID_ARGS;
