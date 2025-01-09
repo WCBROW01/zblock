@@ -606,6 +606,7 @@ int main(void) {
 	discord_set_on_interaction_create(client, &on_interaction);
 	discord_set_on_guild_delete(client, &on_guild_delete);
 	discord_set_on_channel_delete(client, &on_channel_delete);
+	discord_set_on_thread_delete(client, &on_channel_delete);
 
 	// register timers
 	discord_timer_interval(client, timer_retrieve_feeds, NULL, NULL, FEED_TIMER_DELAY, FEED_TIMER_INTERVAL, -1);
