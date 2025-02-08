@@ -258,7 +258,8 @@ static void bot_command_add(struct discord *client, const struct discord_interac
 	}
 	
 	feed.title = mrss_feed->title;
-	feed.last_pubDate = mrss_feed->item->pubDate;
+	// if there are no entries, set the last pubDate to zero.
+	feed.last_pubDate = mrss_feed->item ? mrss_feed->item->pubDate : 0;
 	
 	zblock_feed_info_err insert_res = zblock_feed_info_insert(database_conn, &feed);
 	if (insert_res) {
