@@ -15,4 +15,8 @@ A simple, lightweight Discord RSS bot
 - [x] Remove all feeds if bot is removed from a guild
 - [x] Implement list command
 - [x] Implement remove command
-
+- [x] Fix building in FreeBSD
+- [ ] Daemonize the bot (including command-line args)
+- [ ] Allow use of a system-wide config
+- [ ] Provide systemd and rc.d services
+- [ ] Create an installation script
