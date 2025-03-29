@@ -3,7 +3,7 @@
 
 #include <concord/discord.h>
 
-#include <postgresql/libpq-fe.h>
+#include <libpq-fe.h>
 
 typedef struct {
 	char *url;

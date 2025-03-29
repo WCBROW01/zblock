@@ -17,7 +17,7 @@
 
 #include <mrss.h>
 
-#include <postgresql/libpq-fe.h>
+#include <libpq-fe.h>
 
 #include "config.h"
 #include "feed_info.h"
