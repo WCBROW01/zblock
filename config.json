@@ -23,6 +23,7 @@
     "tuesday": {
       "enable": false,
       "channel": "YOUR-CHANNEL-ID"
-    }
+    },
+    "storytime_channel": "YOUR-CHANNEL-ID"
   }
 }

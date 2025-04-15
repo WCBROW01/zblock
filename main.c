@@ -444,6 +444,65 @@ static void list_update(struct discord *client, const struct discord_interaction
 	Arena_delete(arena);
 }
 
+static bool acceptchars(int c, const char *accept) {
+	while (*accept) if (c == *accept++) return true;
+	return false;
+}
+
+struct storytime_args {
+	struct discord *client;
+	u64snowflake channel_id;
+	u64snowflake user_id;
+};
+
+struct storytime_msgs_list {
+	struct discord_messages data;
+	struct storytime_msgs_list *next;
+};
+
+static void bot_command_story(struct discord *client, const struct discord_interaction *event) {
+	if (!zblock_config.storytime_channel) {
+		struct discord_interaction_response res = {
+			.type = DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE,
+			.data = &(struct discord_interaction_callback_data) {
+				.content = "There is no storytime channel set in the bot config."
+			}
+		};
+		
+		discord_create_interaction_response(client, event->id, event->token, &res, NULL);
+		return;
+	}
+	
+	// time to dump our messages
+	char story_content[DISCORD_MAX_MESSAGE_LEN];
+	char *story_content_last = story_content;
+	
+	struct discord_get_channel_messages params = { .limit = 100 };
+	struct discord_messages msgs = {0};
+	struct discord_ret_messages ret = { .sync = &msgs };
+	discord_get_channel_messages(client, zblock_config.storytime_channel, &params, &ret);
+	
+	for (int i = msgs.size - 1; i >= 0; --i) {
+		char *msg_content = msgs.array[i].content;
+		if (!acceptchars(msg_content[0], "!),.?")) { // check for punctuation
+		    story_content_last = stpncpy(story_content_last, " ", sizeof(story_content) - (story_content_last - story_content));
+		}
+		story_content_last = stpncpy(story_content_last, msg_content, sizeof(story_content) - (story_content_last - story_content));
+	}
+	story_content[sizeof(story_content) - 1] = 0; // in case the message was truncated
+	
+	discord_messages_cleanup(&msgs);
+	
+	struct discord_interaction_response res = {
+		.type = DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE,
+		.data = &(struct discord_interaction_callback_data) {
+			.content = story_content_last != story_content ? story_content : "Sorry, I don't have a story for you."
+		}
+	};
+	discord_create_interaction_response(client, event->id, event->token, &res, NULL);
+	
+}
+
 static void bot_command_help(struct discord *client, const struct discord_interaction *event) {
 	char msg[DISCORD_MAX_MESSAGE_LEN];
 
@@ -506,6 +565,14 @@ static struct bot_command commands[] = {
 			.default_permission = true
 		},
 		.func = &bot_command_list
+	},
+	{
+		.cmd = {
+			.name = "story",
+			.description = "Tell me a story",
+			.default_permission = true
+		},
+		.func = &bot_command_story
 	},
 	{
 		.cmd = {

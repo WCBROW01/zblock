@@ -7,6 +7,7 @@
 extern struct zblock_config {
 	char *conninfo;
 	u64snowflake tuesday_channel;
+	u64snowflake storytime_channel;
 	bool tuesday_enable;
 } zblock_config;
 

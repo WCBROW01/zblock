@@ -33,6 +33,11 @@ zblock_config_err zblock_config_load(struct discord *client) {
 		if (!zblock_config.tuesday_channel) return ZBLOCK_CONFIG_NO_TUESDAY_CHANNEL;
 	}
 	
+	// failure here will just make the bot complain whenever somebody requests a storytime compilation
+	struct ccord_szbuf_readonly storytime_channel = discord_config_get_field(client, (char *[2]){"zblock", "storytime_channel"}, 2);
+	zblock_config.storytime_channel = 0; // initialize it with something
+	if (storytime_channel.size > 0) zblock_config.storytime_channel = strtoull(storytime_channel.start, NULL, 10);
+	
 	return ZBLOCK_CONFIG_OK;
 }
 
